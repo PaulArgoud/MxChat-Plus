@@ -1,0 +1,67 @@
+name: Feature request
+description: Suggest an enhancement or new capability.
+title: "[feat] "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion. The bar for new features is "would this be useful to more than just one install?" — please frame the request that way so we can prioritise.
+
+        One constraint is non-negotiable: **mxchat-plus never modifies the host plugin.** A proposal that requires editing files under `mxchat-basic/` belongs upstream, not here.
+
+  - type: dropdown
+    id: module
+    attributes:
+      label: Which module?
+      options:
+        - DuckDB / MotherDuck vector store
+        - Prompt caching
+        - Both / plugin-wide
+        - A new module
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do that the plugin doesn't let you do today?
+      placeholder: "When my catalog grows past 50k vectors, the orphan compactor takes minutes because ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would the API / setting / CLI command look like? A code sketch is welcome.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What workarounds have you tried? Why aren't they enough?
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      description: Is this a small addition (new filter, new CLI flag) or a structural change (new backend, new schema)?
+      options:
+        - Small (filter / hook / CLI flag / option)
+        - Medium (new admin section / new REST endpoint / new ingestion path)
+        - Large (new backend / new schema / breaking change)
+        - Don't know yet
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I searched [existing issues](https://github.com/PaulArgoud/mxchat-plus/issues) and the [Roadmap](https://github.com/PaulArgoud/mxchat-plus#roadmap); this isn't already tracked.
+          required: true
+        - label: This can be built without patching mxchat-basic.
+          required: true

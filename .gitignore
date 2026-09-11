@@ -1,0 +1,38 @@
+# Composer
+/vendor/
+
+# composer.lock is deliberately NOT ignored: it is what makes `composer install`
+# reproducible in CI and on a contributor's machine. (An application-style lock
+# in a wordpress-plugin package is fine — nobody `composer require`s this plugin.)
+
+# The host plugin, kept next to the tree as a read-only reference for grepping
+# its hooks. It is a third-party GPL plugin, not part of this one, and it must
+# never be modified or redistributed from here.
+/mxchat-basic/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Local DuckDB data (in case someone puts a copy at the repo root)
+*.duckdb
+*.duckdb.wal
+*.duckdb.tmp
+
+# Local build artifacts
+.phpunit.result.cache
+.phpunit.cache/
+/build/
+/dist/
+
+# Translations: the .pot, the .po AND the compiled .mo are committed on purpose.
+# The plugin ships as a zip and end users never run msgfmt, so an uncommitted
+# .mo means the French UI silently falls back to English.
+
+# Logs
+*.log
+debug.log

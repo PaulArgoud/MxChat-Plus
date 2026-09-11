@@ -1,0 +1,113 @@
+name: Bug report
+description: Something doesn't work the way the docs claim.
+title: "[bug] "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report. To help fix the issue quickly:
+        - Reproduce on a **clean WordPress + mxchat-basic install** if you can; that rules out conflicts with other plugins.
+        - **Do not** post security vulnerabilities here — open a private [Security Advisory](https://github.com/PaulArgoud/mxchat-plus/security/advisories/new) instead.
+
+  - type: dropdown
+    id: module
+    attributes:
+      label: Which module?
+      options:
+        - DuckDB / MotherDuck vector store
+        - Prompt caching
+        - Both / don't know
+    validations:
+      required: true
+
+  - type: input
+    id: plugin_version
+    attributes:
+      label: Plugin version
+      description: From the WordPress plugins screen, or `MXCHAT_PLUS_VERSION` in `mxchat-plus.php`.
+      placeholder: "1.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Vector-store backend (DuckDB module only)
+      options:
+        - Embedded DuckDB (PECL extension)
+        - Embedded DuckDB (CLI fallback)
+        - MotherDuck (PECL extension)
+        - MotherDuck (CLI fallback)
+        - Unknown / both / N/A
+    validations:
+      required: true
+
+  - type: dropdown
+    id: streaming
+    attributes:
+      label: Is MxChat streaming enabled? (prompt-cache module only)
+      description: Prompt caching cannot act while streaming is ON — the host bypasses the WordPress HTTP API. See the README.
+      options:
+        - "Streaming OFF (required for prompt caching)"
+        - "Streaming ON"
+        - Don't know / N/A
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: PHP version + WordPress version + mxchat-basic version.
+      placeholder: "PHP 8.2 / WP 6.6 / mxchat-basic 3.2.21"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened
+      description: What did you see? Include error messages verbatim and stack traces if you have them.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: What should have happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Numbered steps that another developer can follow on a fresh install.
+      placeholder: |
+        1. Activate the plugin
+        2. Set backend to MotherDuck
+        3. Click Test connection
+        4. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: Anything from `wp-content/debug.log`, the admin Last Error notice, `wp mxchat-plus duckdb stats`, or `wp mxchat-plus promptcache stats`. Redact tokens before pasting.
+      render: shell
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I searched [existing issues](https://github.com/PaulArgoud/mxchat-plus/issues) and didn't find a duplicate.
+          required: true
+        - label: I'm running a [supported version](https://github.com/PaulArgoud/mxchat-plus/blob/main/SECURITY.md#supported-versions).
+          required: true
+        - label: I did **not** modify anything inside the mxchat-basic plugin.
+          required: true

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/PaulArgoud/mxchat-plus/security/advisories/new
+    about: Report privately through a GitHub Security Advisory — do not open a public issue.
+  - name: Question / discussion
+    url: https://github.com/PaulArgoud/mxchat-plus/discussions
+    about: For usage questions and design discussions, use Discussions instead of issues.
+  - name: Bug in MxChat itself (mxchat-basic)
+    url: https://mxchat.ai/
+    about: This plugin never modifies the host plugin. Bugs in mxchat-basic belong upstream.

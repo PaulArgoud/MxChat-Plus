@@ -1,0 +1,45 @@
+{
+    "name": "paulargoud/mxchat-plus",
+    "description": "WordPress companion plugin for MxChat: DuckDB / MotherDuck vector store + Anthropic prompt caching, in one plugin.",
+    "type": "wordpress-plugin",
+    "license": "GPL-2.0-or-later",
+    "homepage": "https://github.com/paulargoud/mxchat-plus",
+    "keywords": ["wordpress", "wordpress-plugin", "mxchat", "duckdb", "motherduck", "vector-search", "rag", "embeddings", "pinecone", "prompt-caching", "anthropic"],
+    "authors": [
+        { "name": "Paul Argoud", "homepage": "https://github.com/PaulArgoud" }
+    ],
+    "support": {
+        "issues": "https://github.com/paulargoud/mxchat-plus/issues",
+        "source": "https://github.com/paulargoud/mxchat-plus"
+    },
+    "require": {
+        "php": ">=8.1"
+    },
+    "require-dev": {
+        "phpstan/extension-installer": "^1.4",
+        "phpstan/phpstan": "^2.0",
+        "phpunit/phpunit": "^10.5",
+        "szepeviktor/phpstan-wordpress": "^2.0"
+    },
+    "extra": {
+        "note-on-autoload": "There is deliberately no runtime `autoload` section. The plugin boots through its own require_once chain in mxchat-plus.php and must keep working on installs that never run composer — the release zip ships no vendor/ directory. Composer is a development-only tool here; adding a classmap over includes/ would make the runtime silently depend on it."
+    },
+    "autoload-dev": {
+        "classmap": [
+            "tests/",
+            "phpstan/"
+        ]
+    },
+    "scripts": {
+        "lint": "find . -name '*.php' -not -path './vendor/*' -not -path './mxchat-basic/*' -not -path './tests/_output/*' -print0 | xargs -0 -n1 php -l",
+        "test": "phpunit --testdox",
+        "stan": "phpstan analyse --memory-limit=512M"
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "sort-packages": true,
+        "allow-plugins": {
+            "phpstan/extension-installer": true
+        }
+    }
+}

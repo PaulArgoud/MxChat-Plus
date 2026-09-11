@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/10.5/phpunit.xsd"
+         bootstrap="tests/bootstrap.php"
+         colors="true"
+         cacheDirectory=".phpunit.cache"
+         failOnWarning="true"
+         failOnRisky="true"
+         beStrictAboutOutputDuringTests="true"
+         beStrictAboutTestsThatDoNotTestAnything="true">
+    <testsuites>
+        <!-- One suite per module, so a testsuite filter narrows the run to
+             "duckdb" or "promptcache" while the default invocation still
+             executes both. -->
+        <testsuite name="duckdb">
+            <directory>tests/unit/duckdb</directory>
+        </testsuite>
+        <testsuite name="promptcache">
+            <directory>tests/unit/promptcache</directory>
+        </testsuite>
+        <testsuite name="transcripts">
+            <directory>tests/unit/transcripts</directory>
+        </testsuite>
+    </testsuites>
+    <source>
+        <include>
+            <directory>includes</directory>
+        </include>
+        <exclude>
+            <!-- Exclude the WP-CLI bridge from coverage — it needs the WP_CLI runtime. -->
+            <file>includes/duckdb/class-duckdb-cli.php</file>
+        </exclude>
+    </source>
+</phpunit>

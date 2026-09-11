@@ -1,0 +1,68 @@
+From: Paul Argoud <paul@argoud.net>
+Subject: [PATCH] Add mxchat_pre_vector_query short-circuit filter
+
+Lets companion plugins (DuckDB / MotherDuck / Qdrant adapters, etc.)
+bypass the Pinecone HTTP call in find_relevant_content_pinecone() with
+native PHP. Returns a Pinecone-shaped response array; null falls
+through to the existing behaviour.
+
+Follows the WordPress core `pre_*` short-circuit convention — same
+pattern used by pre_get_posts, pre_user_query, pre_option_*: return
+null for the default flow, return a value to skip the rest of the
+function.
+
+Total change: ~14 lines added (filter call + if/else wrapper).
+Existing wp_remote_post block stays untouched, just moved into the
+`else` branch. All downstream logic (chunk reassembly, role checks,
+similarity analysis, RAG context assembly) is reused as-is.
+
+Applies cleanly against mxchat-basic 3.2.6 through 3.2.8 (exact match,
+no offset or fuzz).
+
+Signed-off-by: Paul Argoud <paul@argoud.net>
+---
+--- a/includes/class-mxchat-integrator.php
++++ b/includes/class-mxchat-integrator.php
+@@ -5443,11 +5443,27 @@
+     if (!empty($namespace)) {
+         $request_body['namespace'] = $namespace;
+     }
+-    
++
++    // ───────────────── BEGIN PATCH ─────────────────
++    // Let companion plugins short-circuit the Pinecone HTTP call.
++    // Returning a Pinecone-shaped array bypasses the network entirely;
++    // returning null falls through to the existing wp_remote_post() flow.
++    $pre = apply_filters('mxchat_pre_vector_query', null, array(
++        'vector'    => $user_embedding,
++        'top_k'     => $request_body['topK'],
++        'namespace' => $namespace,
++        'bot_id'    => $bot_id,
++    ));
++
++    if (is_array($pre) && isset($pre['matches'])) {
++        $results = $pre;
++    } else {
++    // ───────────────── END PATCH (top) ─────────────
++
+     //error_log("MXCHAT DEBUG: About to call Pinecone API");
+     //error_log("  - Endpoint: " . $api_endpoint);
+     //error_log("  - Namespace in request: " . (!empty($namespace) ? $namespace : 'NOT SET'));
+-    
++
+     $response = wp_remote_post($api_endpoint, array(
+         'headers' => array(
+             'Api-Key' => $api_key,
+@@ -5489,7 +5505,11 @@
+         $this->current_valid_urls = [];
+         return '';
+     }
+-    
++
++    // ───────────────── BEGIN PATCH (bottom) ────────
++    } // end else { ... wp_remote_post fallback }
++    // ───────────────── END PATCH ───────────────────
++
+     //error_log("MXCHAT DEBUG: Pinecone response structure:");
+     //error_log("  - Has 'matches' key: " . (isset($results['matches']) ? 'yes' : 'no'));
+     //error_log("  - Has 'namespace' key: " . (isset($results['namespace']) ? 'yes (' . $results['namespace'] . ')' : 'no'));

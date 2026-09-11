@@ -1,0 +1,112 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build-zip:
+    name: Build & attach distribution zip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          tools: composer:v2
+          coverage: none
+
+      - name: Determine version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Tag must match the plugin header and the readme stable tag
+        # Three sources of truth used to drift independently; a release whose
+        # zip reports a different version than the tag is unshippable.
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          header=$(sed -n 's/^[[:space:]]*\*\{0,1\}[[:space:]]*Version:[[:space:]]*\([0-9][^[:space:]]*\).*/\1/p' mxchat-plus.php | head -1)
+          stable=$(sed -n 's/^Stable tag:[[:space:]]*\([^[:space:]]*\).*/\1/p' readme.txt | head -1)
+          echo "tag=$VERSION  plugin-header=$header  stable-tag=$stable"
+          fail=0
+          [ -n "$header" ] || { echo '::error::No `Version:` header found in mxchat-plus.php'; fail=1; }
+          [ -n "$stable" ] || { echo '::error::No `Stable tag:` found in readme.txt'; fail=1; }
+          [ "$header" = "$VERSION" ] || { echo "::error::Tag v$VERSION != mxchat-plus.php Version: $header"; fail=1; }
+          [ "$stable" = "$VERSION" ] || { echo "::error::Tag v$VERSION != readme.txt Stable tag: $stable"; fail=1; }
+          exit $fail
+
+      - name: Install production deps only
+        run: composer install --no-dev --prefer-dist --no-progress --no-interaction --optimize-autoloader
+
+      - name: Compile fr_FR.mo
+        run: |
+          sudo apt-get update && sudo apt-get install -y gettext
+          msgfmt --check languages/mxchat-plus-fr_FR.po -o languages/mxchat-plus-fr_FR.mo
+
+      - name: Stage release tree
+        # ALLOW-LIST, not a deny-list. Anything not named here stays out of the
+        # zip by construction, so adding tools/, docs/, phpstan/ or another
+        # test directory can never accidentally ship to end users.
+        run: |
+          set -euo pipefail
+          dest=build/mxchat-plus
+          mkdir -p "$dest"
+
+          # Files at the plugin root.
+          for f in mxchat-plus.php uninstall.php index.php readme.txt LICENSE; do
+            test -f "$f" || { echo "::error::Required release file missing: $f"; exit 1; }
+            cp "$f" "$dest/"
+          done
+
+          # Directories shipped whole.
+          for d in includes admin assets; do
+            test -d "$d" || { echo "::error::Required release directory missing: $d"; exit 1; }
+            cp -R "$d" "$dest/"
+          done
+
+          # Translations: the compiled catalogues and the template only —
+          # the .po sources stay in the repo.
+          mkdir -p "$dest/languages"
+          cp languages/*.mo "$dest/languages/"
+          cp languages/*.pot "$dest/languages/"
+
+          # vendor/ is deliberately NOT shipped. composer.json declares no
+          # runtime `autoload` section — the plugin boots through its own
+          # classmap autoloader (includes/core/class-mxchat-plus-autoloader.php)
+          # and must keep working on installs that never run composer. So
+          # vendor/ holds development tooling only (PHPUnit, PHPStan), which
+          # the "Refuse to ship development files" step below would reject
+          # anyway.
+
+          echo "--- release tree ---"
+          find "$dest" -maxdepth 2 | sort
+
+      - name: Refuse to ship development files
+        # Belt and braces on top of the allow-list: fail loudly if any of these
+        # ever reach the staged tree.
+        run: |
+          set -euo pipefail
+          bad=$(find build/mxchat-plus \
+                  \( -name '*.po' -o -name 'composer.json' -o -name 'composer.lock' \
+                     -o -name 'phpunit.xml*' -o -name 'phpstan*' -o -name '.git*' \) -print)
+          if [ -n "$bad" ]; then
+            echo "::error::Development files leaked into the release tree:"
+            printf '%s\n' "$bad"
+            exit 1
+          fi
+
+      - name: Create zip
+        working-directory: build
+        run: zip -r "../mxchat-plus-${{ steps.version.outputs.version }}.zip" mxchat-plus
+
+      - name: Attach zip to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: mxchat-plus-${{ steps.version.outputs.version }}.zip

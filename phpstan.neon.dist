@@ -1,0 +1,79 @@
+includes:
+    - phpstan-baseline.neon
+
+services:
+    -
+        class: MxChat\DuckDB\PHPStan\UnsafeSqlConstructionRule
+        tags: [phpstan.rules.rule]
+
+parameters:
+    level: 7
+    paths:
+        - mxchat-plus.php
+        - uninstall.php
+        - includes
+        - admin
+    # Globs, not bare paths: PHPStan validates the existence of a literal path
+    # but treats anything containing a wildcard as an fnmatch pattern, so these
+    # stay harmless in a checkout where the directory hasn't been created yet.
+    excludePaths:
+        - vendor/*
+        - tests/_output/*
+        - build/*
+        # The rule itself uses PHPStan + nikic/php-parser types that aren't
+        # in the analyser's own classmap, so analysing it would generate
+        # false positives. The rule's logic is exercised by the unit test
+        # UnsafeSqlConstructionRuleTest instead.
+        - phpstan/*
+    treatPhpDocTypesAsCertain: false
+    # TEMPORARY (see phpstan-baseline.neon): the baseline was inherited from
+    # mxchat-duckdb and path-rewritten for the merged tree, so a handful of its
+    # entries may no longer match once mxchat-plus.php and includes/promptcache/
+    # land. Unmatched entries are tolerated until the baseline is regenerated
+    # from reality; flip this back to true (the PHPStan default) at that point.
+    reportUnmatchedIgnoredErrors: false
+    # WordPress / wpdb / WP_REST_Request / WP_Post stubs come from
+    # szepeviktor/phpstan-wordpress (auto-loaded via phpstan/extension-installer
+    # when dev-deps are installed). The hand-rolled bootstrap stays as a
+    # fallback for environments without composer install.
+    bootstrapFiles:
+        - tests/phpstan-bootstrap.php
+        - phpstan/UnsafeSqlConstructionRule.php
+    # Without these two, PHPStan folds the `if (!defined('WP_CLI') || !WP_CLI)`
+    # guard to a constant-true bail-out and declares the whole CLI bridge dead
+    # code — same for every WP_DEBUG-gated diagnostic branch.
+    dynamicConstantNames:
+        - WP_DEBUG
+        - WP_CLI
+    # All missingType.iterableValue + missingType.return + missingType.parameter
+    # findings live in phpstan-baseline.neon. They've existed in the codebase
+    # since the strict level-6 elevation; the path to level 7/8 involves
+    # replacing them with proper array<key, value> / shape / return-type
+    # annotations, file by file. Until that work is done, the baseline keeps CI
+    # green without hiding any *new* findings.
+    ignoreErrors:
+        # WP-CLI exposes WP_CLI\Utils\format_items and make_progress_bar
+        # as helpers; szepeviktor/phpstan-wordpress doesn't currently ship
+        # signatures for them, so PHPStan flags them as not-found. The
+        # functions are guaranteed present whenever this file actually
+        # runs (the top-level `if (!WP_CLI) return;` guard ensures it).
+        # The PHPUnit shim re-declares them via eval() at test runtime.
+        -
+            message: '#Function WP_CLI\\Utils\\(format_items|make_progress_bar) not found#'
+            path: includes/duckdb/class-duckdb-cli.php
+        # The DuckDB native handle ($this->native — the PECL ext-duckdb or
+        # saturio/duckdb-php connection) and the prepared statement it returns
+        # have no PHPStan stub package, so the analyser sees a bare `object`.
+        # Every method we call on them (query, the dynamic prepare, bind /
+        # bindParam, execute) is guarded at runtime by extension_loaded('duckdb')
+        # + method_exists() probes (see probe_prepared_support()). Surfaced only
+        # at level 7; same rationale as the WP_CLI entry above.
+        -
+            message: '#Call to an undefined method object::query\(\)#'
+            path: includes/duckdb/class-duckdb-embedded-connection.php
+        -
+            message: '#Cannot call method (bindParam|bind|execute)\(\) on class-string\|object#'
+            path: includes/duckdb/class-duckdb-embedded-connection.php
+    # Now at level 7. Path to level 8: bump to 8, run, address/baseline any
+    # new noise, then drain the baseline file-by-file as missingType.* findings
+    # get real array<key,value> / shape annotations. Each step stays reviewable.

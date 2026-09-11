@@ -1,0 +1,960 @@
+# PHPStan baseline for mxchat-plus.
+#
+# PROVENANCE: inherited from mxchat-duckdb 0.6.x and mechanically rewritten for
+# the merged tree — `includes/class-duckdb-*.php` -> `includes/duckdb/…`,
+# `mxchat-duckdb.php` -> `mxchat-plus.php`, `MxChat_DuckDB_*` -> `MxChat_Plus_DuckDB_*`
+# (and `MxChat_DuckDB_Plugin` -> `MxChat_Plus_Plugin`). No new entries were
+# invented: every message below already existed upstream.
+#
+# TODO(1.0.0): once mxchat-plus.php and includes/promptcache/ have landed, run
+#   vendor/bin/phpstan analyse --memory-limit=512M --generate-baseline
+# to regenerate this file from reality, then flip `reportUnmatchedIgnoredErrors`
+# back to true in phpstan.neon.dist so stale entries fail the build again.
+#
+# Every entry here is a missingType.* finding. Draining them (real
+# array<key, value> / shape / return-type annotations, file by file) is the
+# path to level 8 — see phpstan.neon.dist.
+
+parameters:
+	ignoreErrors:
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Async_Reprocess\:\:enqueue_batch\(\) has parameter \$post_types with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-async-reprocess.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Async_Reprocess\:\:enqueue_batch\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-async-reprocess.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Async_Reprocess\:\:is_complete\(\) has parameter \$state with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-async-reprocess.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Async_Reprocess\:\:status\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-async-reprocess.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_CLI\:\:async_reprocess\(\) has parameter \$args with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-cli.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_CLI\:\:async_reprocess\(\) has parameter \$assoc_args with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-cli.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_CLI\:\:cache\(\) has parameter \$args with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-cli.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_CLI\:\:cache\(\) has parameter \$assoc_args with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-cli.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_CLI\:\:compact\(\) has parameter \$args with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-cli.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_CLI\:\:compact\(\) has parameter \$assoc_args with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-cli.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_CLI\:\:export\(\) has parameter \$args with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-cli.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_CLI\:\:export\(\) has parameter \$assoc_args with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-cli.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_CLI\:\:import\(\) has parameter \$args with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-cli.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_CLI\:\:import\(\) has parameter \$assoc_args with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-cli.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_CLI\:\:metrics\(\) has parameter \$args with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-cli.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_CLI\:\:metrics\(\) has parameter \$assoc_args with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-cli.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_CLI\:\:migrate_from_pinecone\(\) has parameter \$args with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-cli.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_CLI\:\:migrate_from_pinecone\(\) has parameter \$assoc_args with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-cli.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_CLI\:\:mirror_bootstrap\(\) has parameter \$args with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-cli.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_CLI\:\:mirror_bootstrap\(\) has parameter \$assoc_args with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-cli.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_CLI\:\:mirror_drain\(\) has parameter \$args with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-cli.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_CLI\:\:mirror_drain\(\) has parameter \$assoc_args with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-cli.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_CLI\:\:mirror_drift_check\(\) has parameter \$args with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-cli.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_CLI\:\:mirror_drift_check\(\) has parameter \$assoc_args with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-cli.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_CLI\:\:reprocess\(\) has parameter \$args with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-cli.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_CLI\:\:reprocess\(\) has parameter \$assoc_args with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-cli.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_CLI\:\:stats\(\) has parameter \$args with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-cli.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_CLI\:\:stats\(\) has parameter \$assoc_args with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-cli.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_CLI\:\:sync\(\) has parameter \$args with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-cli.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_CLI\:\:sync\(\) has parameter \$assoc_args with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-cli.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_CLI\:\:test\(\) has parameter \$args with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-cli.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_CLI\:\:test\(\) has parameter \$assoc_args with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-cli.php
+
+		-
+			message: '#^Variable \$result might not be defined\.$#'
+			identifier: variable.undefined
+			count: 4
+			path: includes/duckdb/class-duckdb-cli.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Compactor\:\:delete_chunk\(\) has parameter \$ids with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-compactor.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Compactor\:\:run\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-compactor.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Connection\:\:execute\(\) has parameter \$params with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-connection.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Connection\:\:execute\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-connection.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Connection_Factory\:\:cache_key\(\) has parameter \$opts with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-connection.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Connection_Factory\:\:from_options\(\) has parameter \$opts with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-connection.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Embedded_Connection\:\:__construct\(\) has parameter \$opts with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-embedded-connection.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Embedded_Connection\:\:execute\(\) has parameter \$params with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-embedded-connection.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Embedded_Connection\:\:execute\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-embedded-connection.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Embedded_Connection\:\:execute_cli\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-embedded-connection.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Embedded_Connection\:\:execute_native\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-embedded-connection.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Embedded_Connection\:\:execute_native_prepared\(\) has parameter \$params with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-embedded-connection.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Embedded_Connection\:\:execute_native_prepared\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-embedded-connection.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Embedded_Connection\:\:execute_with_retry\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-embedded-connection.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Embedded_Connection\:\:inline_params\(\) has parameter \$params with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-embedded-connection.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Embedded_Connection\:\:result_to_rows\(\) has parameter \$result with no type specified\.$#'
+			identifier: missingType.parameter
+			count: 1
+			path: includes/duckdb/class-duckdb-embedded-connection.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Embedded_Connection\:\:result_to_rows\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-embedded-connection.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Embedded_Connection\:\:split_array_params\(\) has parameter \$params with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-embedded-connection.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Embedded_Connection\:\:to_literal\(\) has parameter \$val with no type specified\.$#'
+			identifier: missingType.parameter
+			count: 1
+			path: includes/duckdb/class-duckdb-embedded-connection.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Metrics\:\:load\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-metrics.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Metrics\:\:save\(\) has parameter \$data with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-metrics.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Metrics\:\:snapshot\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-metrics.php
+
+		-
+			message: '#^Action callback returns array\{status\: string, processed\: int, target\: int\|null, done\: bool, last_error\?\: string\} but should not return anything\.$#'
+			identifier: return.void
+			count: 1
+			path: includes/duckdb/class-duckdb-mirror-bootstrap.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Mirror_Bootstrap\:\:__construct\(\) has parameter \$opts_override with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-mirror-bootstrap.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Mirror_Bootstrap\:\:connection\(\) has parameter \$opts with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-mirror-bootstrap.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Mirror_Bootstrap\:\:ensure_local_schema\(\) has parameter \$opts with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-mirror-bootstrap.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Mirror_Bootstrap\:\:literal_float_array\(\) has parameter \$arr with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-mirror-bootstrap.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Mirror_Bootstrap\:\:literal_for\(\) has parameter \$val with no type specified\.$#'
+			identifier: missingType.parameter
+			count: 1
+			path: includes/duckdb/class-duckdb-mirror-bootstrap.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Mirror_Bootstrap\:\:literal_int_or_float_array\(\) has parameter \$arr with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-mirror-bootstrap.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Mirror_Bootstrap\:\:resolve_opts\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-mirror-bootstrap.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Mirror_Bootstrap\:\:save_state\(\) has parameter \$state with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-mirror-bootstrap.php
+
+		-
+			message: '#^sprintf\(\) builds an SQL string with a `%%s` substituted from a non\-constant value outside the approved helper files\. Use `\?`\-placeholders \+ the params array on MxChat_Plus_DuckDB_Connection\:\:execute\(\), or run the value through the literal_\* helpers in trait\-duckdb\-sql\-helpers\.$#'
+			identifier: mxchat.unsafeSqlSprintf
+			count: 5
+			path: includes/duckdb/class-duckdb-mirror-bootstrap.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Mirror_Drift_Check\:\:literal_float_array\(\) has parameter \$arr with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-mirror-drift-check.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Mirror_Drift_Check\:\:literal_for\(\) has parameter \$val with no type specified\.$#'
+			identifier: missingType.parameter
+			count: 1
+			path: includes/duckdb/class-duckdb-mirror-drift-check.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Mirror_Drift_Check\:\:literal_int_or_float_array\(\) has parameter \$arr with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-mirror-drift-check.php
+
+		-
+			message: '#^sprintf\(\) builds an SQL string with a `%%s` substituted from a non\-constant value outside the approved helper files\. Use `\?`\-placeholders \+ the params array on MxChat_Plus_DuckDB_Connection\:\:execute\(\), or run the value through the literal_\* helpers in trait\-duckdb\-sql\-helpers\.$#'
+			identifier: mxchat.unsafeSqlSprintf
+			count: 1
+			path: includes/duckdb/class-duckdb-mirror-drift-check.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Mirrored_Connection\:\:execute\(\) has parameter \$params with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-mirrored-connection.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Mirrored_Connection\:\:execute\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-mirrored-connection.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Mirrored_Connection\:\:pending_state\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 2
+			path: includes/duckdb/class-duckdb-mirrored-connection.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_MotherDuck_Connection\:\:__construct\(\) has parameter \$opts with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-motherduck-connection.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Mysql_Sync\:\:build_select\(\) has parameter \$columns with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-mysql-sync.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Mysql_Sync\:\:row_to_vector\(\) has parameter \$columns with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-mysql-sync.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Mysql_Sync\:\:row_to_vector\(\) has parameter \$row with no type specified\.$#'
+			identifier: missingType.parameter
+			count: 1
+			path: includes/duckdb/class-duckdb-mysql-sync.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Mysql_Sync\:\:row_to_vector\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-mysql-sync.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Mysql_Sync\:\:vector_id_for_row\(\) has parameter \$row with no type specified\.$#'
+			identifier: missingType.parameter
+			count: 1
+			path: includes/duckdb/class-duckdb-mysql-sync.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Options\:\:defaults\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-options.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Options\:\:get\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-options.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Options\:\:sanitize_for_save\(\) has parameter \$input with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-options.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Options\:\:sanitize_for_save\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-options.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Options\:\:update\(\) has parameter \$patch with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-options.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Pinecone_Migrator\:\:call\(\) has parameter \$body with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-pinecone-migrator.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Pinecone_Migrator\:\:call\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-pinecone-migrator.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Pinecone_Migrator\:\:fetch_vectors\(\) has parameter \$ids with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-pinecone-migrator.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Pinecone_Migrator\:\:fetch_vectors\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-pinecone-migrator.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Pinecone_Migrator\:\:pinecone_to_row\(\) has parameter \$v with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-pinecone-migrator.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Pinecone_Migrator\:\:pinecone_to_row\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-pinecone-migrator.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Pinecone_Migrator\:\:run\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-pinecone-migrator.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Pinecone_Proxy\:\:handle_delete\(\) has no return type specified\.$#'
+			identifier: missingType.return
+			count: 1
+			path: includes/duckdb/class-duckdb-pinecone-proxy.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Pinecone_Proxy\:\:handle_fetch\(\) has no return type specified\.$#'
+			identifier: missingType.return
+			count: 1
+			path: includes/duckdb/class-duckdb-pinecone-proxy.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Pinecone_Proxy\:\:handle_list\(\) has no return type specified\.$#'
+			identifier: missingType.return
+			count: 1
+			path: includes/duckdb/class-duckdb-pinecone-proxy.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Pinecone_Proxy\:\:handle_query\(\) has no return type specified\.$#'
+			identifier: missingType.return
+			count: 1
+			path: includes/duckdb/class-duckdb-pinecone-proxy.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Pinecone_Proxy\:\:handle_upsert\(\) has no return type specified\.$#'
+			identifier: missingType.return
+			count: 1
+			path: includes/duckdb/class-duckdb-pinecone-proxy.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Post_Reprocessor\:\:reprocess_posts\(\) has parameter \$post_types with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-post-reprocessor.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Post_Reprocessor\:\:reprocess_posts\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-post-reprocessor.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Search_Adapter\:\:inject_pinecone_addon_options\(\) has no return type specified\.$#'
+			identifier: missingType.return
+			count: 1
+			path: includes/duckdb/class-duckdb-search-adapter.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Search_Adapter\:\:inject_pinecone_config\(\) has no return type specified\.$#'
+			identifier: missingType.return
+			count: 1
+			path: includes/duckdb/class-duckdb-search-adapter.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Search_Adapter\:\:inject_pinecone_config\(\) has parameter \$bot_id with no type specified\.$#'
+			identifier: missingType.parameter
+			count: 1
+			path: includes/duckdb/class-duckdb-search-adapter.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Search_Adapter\:\:inject_pinecone_config\(\) has parameter \$current_config with no type specified\.$#'
+			identifier: missingType.parameter
+			count: 1
+			path: includes/duckdb/class-duckdb-search-adapter.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Search_Adapter\:\:override_matches\(\) has parameter \$embedding with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-search-adapter.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Search_Adapter\:\:override_matches\(\) has parameter \$request_body with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-search-adapter.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Search_Adapter\:\:override_matches\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-search-adapter.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Search_Adapter\:\:pre_vector_query\(\) has parameter \$ctx with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-search-adapter.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Search_Adapter\:\:pre_vector_query\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-search-adapter.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Sync\:\:reprocess_posts\(\) has parameter \$post_types with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-sync.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Sync\:\:reprocess_posts\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-sync.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Sync\:\:vector_id_for_row\(\) has parameter \$row with no type specified\.$#'
+			identifier: missingType.parameter
+			count: 1
+			path: includes/duckdb/class-duckdb-sync.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store_Query\:\:build_where\(\) has parameter \$filter with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store-query.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store_Query\:\:cache_key\(\) has parameter \$embedding with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store-query.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store_Query\:\:cache_key\(\) has parameter \$filter with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store-query.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store_Query\:\:compile_filter\(\) has parameter \$filter with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store-query.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store_Query\:\:dedup_per_source\(\) has parameter \$matches with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store-query.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store_Query\:\:dedup_per_source\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store-query.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store_Query\:\:literal_float_array\(\) has parameter \$arr with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store-query.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store_Query\:\:literal_for\(\) has parameter \$val with no type specified\.$#'
+			identifier: missingType.parameter
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store-query.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store_Query\:\:literal_int_or_float_array\(\) has parameter \$arr with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store-query.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store_Query\:\:normalize_scores\(\) has parameter \$rows with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store-query.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store_Query\:\:normalize_scores\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store-query.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store_Query\:\:query_hybrid\(\) has parameter \$embedding with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store-query.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store_Query\:\:query_hybrid\(\) has parameter \$where_params with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store-query.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store_Query\:\:query_hybrid\(\) has parameter \$where_parts with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store-query.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store_Query\:\:query_hybrid\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store-query.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store_Query\:\:query_vector_only\(\) has parameter \$embedding with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store-query.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store_Query\:\:query_vector_only\(\) has parameter \$where_params with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store-query.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store_Query\:\:query_vector_only\(\) has parameter \$where_parts with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store-query.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store_Query\:\:query_vector_only\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store-query.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store_Query\:\:rows_to_matches\(\) has parameter \$rows with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store-query.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store_Query\:\:rows_to_matches\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store-query.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store_Query\:\:run\(\) has parameter \$embedding with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store-query.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store_Query\:\:run\(\) has parameter \$filter with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store-query.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store_Query\:\:run\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store-query.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store_Query\:\:score_expression\(\) has parameter \$embedding with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store-query.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store_Schema\:\:literal_float_array\(\) has parameter \$arr with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store-schema.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store_Schema\:\:literal_for\(\) has parameter \$val with no type specified\.$#'
+			identifier: missingType.parameter
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store-schema.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store_Schema\:\:literal_int_or_float_array\(\) has parameter \$arr with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store-schema.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store_Schema\:\:table_info\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store-schema.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store\:\:delete_by_ids\(\) has parameter \$vector_ids with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store\:\:fetch_by_ids\(\) has parameter \$vector_ids with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store\:\:fetch_by_ids\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store\:\:list_ids\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store\:\:literal_float_array\(\) has parameter \$arr with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store\:\:literal_for\(\) has parameter \$val with no type specified\.$#'
+			identifier: missingType.parameter
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store\:\:literal_int_or_float_array\(\) has parameter \$arr with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store\:\:query_pinecone_shape\(\) has parameter \$embedding with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store\:\:query_pinecone_shape\(\) has parameter \$filter with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store\:\:query_pinecone_shape\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store\:\:storage_estimate\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store\:\:table_info\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store.php
+
+		-
+			message: '#^Method MxChat_Plus_DuckDB_Vector_Store\:\:upsert_chunk\(\) has parameter \$vectors with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: includes/duckdb/class-duckdb-vector-store.php
+
+		-
+			message: '#^Method MxChat_Plus_Plugin\:\:activate\(\) has no return type specified\.$#'
+			identifier: missingType.return
+			count: 1
+			path: mxchat-plus.php
+
+		-
+			message: '#^Method MxChat_Plus_Plugin\:\:deactivate\(\) has no return type specified\.$#'
+			identifier: missingType.return
+			count: 1
+			path: mxchat-plus.php
+
+		-
+			message: '#^Method MxChat_Plus_Plugin\:\:init\(\) has no return type specified\.$#'
+			identifier: missingType.return
+			count: 1
+			path: mxchat-plus.php
+
+		-
+			message: '#^Method MxChat_Plus_Plugin\:\:load_textdomain\(\) has no return type specified\.$#'
+			identifier: missingType.return
+			count: 1
+			path: mxchat-plus.php
+
+		-
+			message: '#^Method MxChat_Plus_Plugin\:\:mxchat_is_active\(\) has no return type specified\.$#'
+			identifier: missingType.return
+			count: 1
+			path: mxchat-plus.php
+
+		-
+			message: '#^Method MxChat_Plus_Plugin\:\:render_mxchat_missing_notice\(\) has no return type specified\.$#'
+			identifier: missingType.return
+			count: 1
+			path: mxchat-plus.php
