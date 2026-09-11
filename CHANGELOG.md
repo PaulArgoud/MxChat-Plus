@@ -32,7 +32,7 @@ This plugin is the merge of two previously separate plugins. From 1.0.0 onward t
   English and French msgids.
 - PDF / attachment reprocessing; per-bot configuration UI for multi-bot installs.
 
-## [1.0.0] — unreleased
+## [1.0.0] — 2026-09-11
 
 The first release of the merged plugin. **MxChat DuckDB / MotherDuck** 0.13.0 and
 **MXChat Prompt Cache** 0.8.0 become two modules of a single plugin, `mxchat-plus`, joined
@@ -109,6 +109,48 @@ by a third, new one: the transcripts CSV export.
 - Composer is a **dev-only** tool: there is deliberately no runtime `autoload` section, so
   the plugin never depends on `vendor/` at runtime. `composer.lock` is committed.
 - PHPUnit splits into three named suites, `duckdb`, `promptcache` and `transcripts`.
+- **New root [`ARCHITECTURE.md`](ARCHITECTURE.md)** documenting the integration surface
+  MxChat 3.2.21 actually exposes — which hooks exist, which do not, and the traps: the
+  Pinecone config filter applying only to non-default bots, streaming bypassing the
+  WordPress HTTP API through `curl_exec`, and the host already placing its own cache
+  breakpoint. Three Mermaid diagrams, all validated by rendering.
+- **`docs/duckdb/ARCHITECTURE.md` corrected.** Inherited from the pre-merge plugin, it had
+  drifted from the code: it presented Option A as preferred although
+  `mxchat_pre_vector_query` does not exist upstream, and its sequence diagram drew that
+  dead path. Option B (the zero-patch REST proxy) now leads. The stale file layout,
+  PHPStan level, over-fetch factors, cache-key shape and missing mirror subsystem were
+  fixed too. `tools/patches/README.md` now states plainly that its diff no longer applies
+  to 3.2.21.
+
+### Fixed
+
+Defects inherited from the pre-merge plugins, each now covered by a regression test.
+
+- **Orphan compaction skipped rows.** `prune_orphans()` paged the vector table with
+  `LIMIT`/`OFFSET` while deleting from that same table, so every drain shifted the
+  remaining rows left while the offset advanced by a whole page — up to 1000 vectors went
+  unexamined after each batch and a single nightly sweep could never compact everything.
+  Now paged with a keyset cursor on `vector_id`, which concurrent deletes cannot disturb.
+- **`max_deletes` was not a hard ceiling.** The drain checked its budget only before
+  splicing a fixed 100-id chunk, so the last chunk could overshoot the advertised cap by
+  up to 99 deletes — a cap whose purpose is to bound MotherDuck spend. Chunk size is now
+  `min(chunk, remaining budget, buffered)`.
+- **Vectors imported from Pinecone were pruned as orphans.** The migrator keeps Pinecone's
+  own ids, which need not follow the `md5(url)[_chunk_N]` convention the sync writes, so
+  they matched no knowledge-base row and the next nightly sweep deleted the very vectors
+  the migration had copied to avoid re-embedding. The migrator now writes a durable marker
+  and the compactor leaves orphans alone while it is set; installs whose imported ids do
+  match can opt back in with the new `mxchat_plus_duckdb_compactor_prune_orphans` filter.
+- **Fatal at boot without Composer.** The MotherDuck connection was required before its
+  parent class, killing any install made by `git clone`. The classmap autoloader makes
+  load order irrelevant.
+- **Dead query-cache sweep.** The `LIKE` patterns never matched the transient prefix they
+  were meant to purge, so superseded entries accumulated until TTL.
+- **Deactivation left Action Scheduler jobs queued** for `mxchat_plus_duckdb_reprocess_post`
+  with no worker registered. Scheduled hooks now derive from a single source of truth.
+- **Prompt-cache robustness:** `wp_json_encode()` returning `false` no longer produces an
+  empty body, a non-array `headers` value is no longer overwritten (which could drop
+  `x-api-key`), and the `anthropic-beta` header is read case-insensitively.
 
 ### Preserved deliberately
 

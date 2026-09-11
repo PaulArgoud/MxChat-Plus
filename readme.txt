@@ -157,6 +157,10 @@ domain is `mxchat-plus` and nothing else.
 == Changelog ==
 
 = 1.0.0 =
+* Fixed (inherited from the pre-merge plugins): orphan compaction skipped up to 1000
+  vectors per batch; the max-deletes cap could be overshot by up to 99 deletions;
+  vectors imported from Pinecone were treated as orphans and deleted the night after
+  the import; a boot fatal on installs made without Composer.
 * First release of the merged plugin: the former **MxChat DuckDB / MotherDuck** (0.13.0)
   and **MXChat Prompt Cache** (0.8.0) now ship as two modules of one plugin, joined by a
   new third one.
