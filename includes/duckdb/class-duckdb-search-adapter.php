@@ -2,12 +2,16 @@
 /**
  * Search adapter — connects mxchat to DuckDB via two parallel paths.
  *
- * Option A (preferred, requires upstream patch):
+ * Option A (optional, inert by default — requires hand-patching the host):
  *   Hooks `mxchat_pre_vector_query` to short-circuit the HTTP call to Pinecone
  *   inside `find_relevant_content_pinecone()`. Returns the matches wrapped in
  *   the Pinecone response shape (`['matches' => [...]]`) so the upstream code
  *   can keep consuming `$results` unchanged. The patch needed in mxchat-basic
- *   is documented in patches/README.md.
+ *   is documented in tools/patches/README.md. NOTE: `mxchat_pre_vector_query`
+ *   does NOT exist in mxchat-basic 3.2.21 — this handler is registered at no
+ *   cost so it lights up if upstream ever ships the hook, but the nominal path
+ *   is Option B below. Patching a third-party plugin that auto-updates is
+ *   discouraged: the next release reverts it silently.
  *
  *   The legacy `mxchat_pinecone_matches_override` hook (older patch contract,
  *   matches array returned directly) is also registered for backward compat

@@ -6,7 +6,7 @@ Every filter the plugin applies, with signature, purpose, and a short example. U
 
 | Filter | Signature | Default | Purpose |
 |---|---|---|---|
-| [`mxchat_pre_vector_query`](#mxchat_pre_vector_query) | `(?array $previous, array $ctx): ?array` | `null` | WordPress-canonical `pre_*` short-circuit hook on the runtime RAG path. Return a Pinecone-shaped response to bypass the HTTP call. Wired automatically by this plugin when the upstream patch is present (see [`patches/README.md`](../patches/README.md)). |
+| [`mxchat_pre_vector_query`](#mxchat_pre_vector_query) | `(?array $previous, array $ctx): ?array` | `null` | WordPress-canonical `pre_*` short-circuit hook on the runtime RAG path. Return a Pinecone-shaped response to bypass the HTTP call. Registered unconditionally by this plugin, but **inert**: the hook does not exist in mxchat-basic 3.2.21, so it only fires on a host that was patched by hand (see [`tools/patches/`](../../tools/patches/README.md)) or if upstream ever ships it. |
 | [`mxchat_plus_duckdb_post_content`](#mxchat_plus_duckdb_post_content) | `(string $content, WP_Post $post): string` | title + `the_content` filters + stripped tags | Customise the text content sent to MxChat's ingestion pipeline during reprocess. |
 | [`mxchat_plus_duckdb_sync_bot_id`](#mxchat_plus_duckdb_sync_bot_id) | `(string $bot_id, object $row): string` | row's `bot_id` column, else `'default'` | Override the `bot_id` derived from a MySQL KB row. |
 | [`mxchat_plus_duckdb_upsert_chunk_size`](#mxchat_plus_duckdb_upsert_chunk_size) | `(int $size, bool $is_remote): int` | 250 local, 50 MotherDuck | Override the batch size for `INSERT OR REPLACE`. |
@@ -26,7 +26,7 @@ Every filter the plugin applies, with signature, purpose, and a short example. U
 
 WordPress-canonical `pre_*` short-circuit hook on the **runtime RAG path** (the one fired during a chat conversation). Same convention as `pre_get_posts`, `pre_user_query`, `pre_option_*`: return `null` to fall through to default behaviour (the Pinecone HTTP call), return an array to bypass it entirely.
 
-Requires the ~12-line upstream patch in [`patches/README.md`](../patches/README.md). When the patch is present, this plugin hooks it automatically and serves matches from DuckDB before MxChat hits the network. When the patch is absent, the proxy path (Option B) takes over transparently.
+This hook does **not** exist in mxchat-basic 3.2.21 — verified across the host tree. It would require hand-patching the host, which its next update silently reverts, so this is not the recommended path: the proxy (Option B) is the default and needs no patch. The handler stays registered at no cost, so a patched host — or a future upstream release shipping the hook — is served from DuckDB before MxChat hits the network. The patch is kept in [`tools/patches/`](../../tools/patches/README.md), outside the release zip.
 
 ```php
 // Context array shape:
@@ -236,7 +236,7 @@ Beyond filters, two action hooks are useful:
 - **`mxchat_plus_duckdb_incremental_sync`** (cron, hourly) — picks up new rows from the MySQL KB. You can `do_action('mxchat_plus_duckdb_incremental_sync')` to trigger it manually.
 - **`mxchat_plus_duckdb_compact`** (cron, daily) — runs the orphan compactor. Same pattern.
 
-For deeper integration (custom backends, replacing the connection factory, etc.), the codebase uses dependency injection through constructors — see [ARCHITECTURE.md → Design conventions](../ARCHITECTURE.md#design-conventions).
+For deeper integration (custom backends, replacing the connection factory, etc.), the codebase uses dependency injection through constructors — see [ARCHITECTURE.md → Design conventions](ARCHITECTURE.md#design-conventions).
 
 ### `mxchat_plus_duckdb_compactor_prune_orphans`
 

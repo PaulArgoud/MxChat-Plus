@@ -192,6 +192,7 @@ codebase, it belongs to the host and must stay exactly as it is.
 
 | Doc | What's in it |
 |---|---|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | **Start here.** Boot sequence, the three modules, and the real integration surface of MxChat 3.2.21 — which hooks exist, which don't, and the traps. |
 | [docs/duckdb/ARCHITECTURE.md](docs/duckdb/ARCHITECTURE.md) | How the vector store wires into MxChat, query lifecycle, file layout, design conventions. |
 | [docs/duckdb/CONFIGURATION.md](docs/duckdb/CONFIGURATION.md) | Every option, sidecar options, where data lives, dimension/storage change guards. |
 | [docs/duckdb/HOOKS.md](docs/duckdb/HOOKS.md) | Filters and actions the DuckDB module exposes. |

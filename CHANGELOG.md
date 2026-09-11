@@ -193,7 +193,7 @@ elevation. No schema migration. Safe drop-in from 0.12.1.
 - **`mxchat_duckdb_bot_config` filter** — drive a bot's resolved retrieval
   config from code (multi-bot installs that prefer config-as-code). Runs after
   the stored UI overrides, so code wins. Only retrieval keys take effect.
-  See [docs/HOOKS.md](docs/HOOKS.md#mxchat_duckdb_bot_config).
+  See [docs/HOOKS.md](docs/duckdb/HOOKS.md#mxchat_duckdb_bot_config).
 
 #### Changed
 
@@ -212,7 +212,7 @@ elevation. No schema migration. Safe drop-in from 0.12.1.
 - Re-verified the optional Option A upstream patch
   (`patches/mxchat-pre-vector-query.diff`) applies cleanly — exact match, no
   offset or fuzz — against mxchat-basic **3.2.6 through 3.2.8**, and added a
-  "Submitting upstream" section to [patches/README.md](patches/README.md) (MxChat
+  "Submitting upstream" section to [patches/README.md](tools/patches/README.md) (MxChat
   ships from WordPress.org with no public repo, so the proposal routes through
   their support channel).
 
@@ -338,7 +338,7 @@ No schema migration. Built-in models are unaffected. Safe drop-in from 0.11.1.
   field names to physical columns (for add-ons storing custom per-vector
   metadata). Column names are validated against `/^[a-zA-Z0-9_]+$/` before they
   touch SQL, so a bad entry is dropped rather than becoming an injection vector.
-  See [docs/HOOKS.md](docs/HOOKS.md#mxchat_duckdb_filter_fields).
+  See [docs/HOOKS.md](docs/duckdb/HOOKS.md#mxchat_duckdb_filter_fields).
 
 #### CI
 
@@ -657,8 +657,8 @@ acceleration. Opt-in, fully transparent to callers, no public API
 break.
 
 Architecture is documented end-to-end in
-[docs/DESIGN-motherduck-mirror.md](docs/DESIGN-motherduck-mirror.md);
-operator guide in [docs/MIRROR.md](docs/MIRROR.md).
+[docs/DESIGN-motherduck-mirror.md](docs/duckdb/DESIGN-motherduck-mirror.md);
+operator guide in [docs/MIRROR.md](docs/duckdb/MIRROR.md).
 
 #### Added
 
@@ -803,7 +803,7 @@ operator guide in [docs/MIRROR.md](docs/MIRROR.md).
   partial-bootstrap variant of the current full-table copy.
 - **Disk usage doubles** when the mirror is enabled. Admin UI
   doesn't warn at toggle time in v1 — operators should consult
-  [docs/MIRROR.md](docs/MIRROR.md) before flipping the switch on a
+  [docs/MIRROR.md](docs/duckdb/MIRROR.md) before flipping the switch on a
   large catalogue. The mirror file's parent directory gets the same
   HTTP blockers as the embedded path.
 - **MotherDuck egress cost** for the initial bootstrap is on the
@@ -1294,7 +1294,7 @@ naming aligned with WordPress core conventions ahead of the upstream PR.
   Pinecone response shape (`['matches' => …, 'namespace' => …]`). The legacy
   `mxchat_pinecone_matches_override` hook stays registered in parallel so
   installs that applied the previous patch contract keep working unchanged.
-  See [`patches/README.md`](patches/README.md) for the upstream snippet.
+  See [`patches/README.md`](tools/patches/README.md) for the upstream snippet.
 - **`Vector_Store::current()`** singleton (per-request, reset on options
   save) shared by REST proxy and search adapter so options aren't re-parsed
   on every hot-path request.
@@ -1377,7 +1377,7 @@ naming aligned with WordPress core conventions ahead of the upstream PR.
 #### New filters
 
 - `mxchat_pre_vector_query` — WordPress-canonical `pre_*` short-circuit hook
-  for the runtime RAG path. See [`patches/README.md`](patches/README.md).
+  for the runtime RAG path. See [`patches/README.md`](tools/patches/README.md).
 - `mxchat_duckdb_cli_timeout_seconds` — override the CLI execution deadline
   (default 30 s, minimum 1 s).
 - `mxchat_duckdb_proxy_rate_limit_per_minute` gained a second argument
@@ -1750,7 +1750,7 @@ First MVP release. Working end-to-end on stock MxChat 3.2.5, no upstream changes
 
 - **Two parallel integration paths** with MxChat's vector search dispatch:
   - **Option A** — `mxchat_pinecone_matches_override` filter (requires the
-    ~12-line upstream patch documented in [`patches/README.md`](patches/README.md)).
+    ~12-line upstream patch documented in [`patches/README.md`](tools/patches/README.md)).
   - **Option B** — Pinecone wire-protocol emulator served at
     `/wp-json/mxchat-duckdb/v1/pinecone-proxy/` (zero patch required).
 - **Two backends**, switchable from the settings page:

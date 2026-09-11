@@ -1,5 +1,19 @@
 # Upstream patch for MxChat (Option A)
 
+> **Status: optional, unverified against the current host, and not recommended.**
+>
+> `mxchat_pre_vector_query` does **not** exist in mxchat-basic 3.2.21 — the
+> filter this patch adds is our proposal, not an upstream API. Applying it means
+> editing a third-party plugin that auto-updates: the next release reverts it
+> silently, and retrieval falls back to Option B without warning.
+>
+> The line numbers below were taken on **3.2.6**. On 3.2.21 the target function
+> `find_relevant_content_pinecone()` sits at `class-mxchat-integrator.php:7764`,
+> so the diff will not apply cleanly and the manual route is the only option.
+>
+> Use Option B (the REST proxy) unless you have measured the round-trip and
+> found it to matter. This directory is excluded from the release zip.
+
 The plugin works **without** any patch via the Pinecone-proxy path (Option B):
 MxChat is told that DuckDB is a Pinecone backend, and it talks to a local REST
 endpoint we expose. This adds an HTTP round-trip and forces a JSON serialization
@@ -22,11 +36,11 @@ of mxchat-basic:
 
 ```bash
 cd path/to/mxchat-basic
-patch -p1 < /path/to/mxchat-plus/patches/mxchat-pre-vector-query.diff
+patch -p1 < /path/to/mxchat-plus/tools/patches/mxchat-pre-vector-query.diff
 ```
 
 Verified to apply cleanly (exact match, no offset or fuzz) against mxchat-basic
-**3.2.6 through 3.2.8**. The patch only touches
+**3.2.6 through 3.2.8**; it is *not* verified against 3.2.21. The patch only touches
 `includes/class-mxchat-integrator.php` and adds ~14 lines.
 
 ## Submitting upstream
@@ -42,7 +56,7 @@ proposal through MxChat's own channel (support form / contact on
 - **Body:** the rationale + diff from
   [`mxchat-pre-vector-query.diff`](mxchat-pre-vector-query.diff) (the commentary
   above the `---` is written as a ready-to-paste PR description).
-- **Compatibility note:** applies cleanly to 3.2.6–3.2.8; follows the
+- **Compatibility note:** applies cleanly to 3.2.6–3.2.8 only (not 3.2.21); follows the
   WordPress-core `pre_*` short-circuit convention; the existing
   `wp_remote_post()` flow is unchanged (just moved into the `else` branch), so
   there is no behavior change when no filter is registered.

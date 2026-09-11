@@ -1,6 +1,6 @@
 # Configuration
 
-All settings live in a single WP option, `mxchat_plus_duckdb_options`. The admin UI under **MxChat → DuckDB / MotherDuck** edits this option directly through `register_setting()` + the [`MxChat_Plus_DuckDB_Options::sanitize_for_save()`](../includes/class-duckdb-options.php) sanitiser.
+All settings live in a single WP option, `mxchat_plus_duckdb_options`. The admin UI under **MxChat → DuckDB / MotherDuck** edits this option directly through `register_setting()` + the [`MxChat_Plus_DuckDB_Options::sanitize_for_save()`](../../includes/duckdb/class-duckdb-options.php) sanitiser.
 
 ## Options reference
 
@@ -49,7 +49,7 @@ The plugin also writes a handful of non-autoloaded options outside the main bund
 | `mxchat_plus_duckdb_pinecone_migration_state` | Resumption token + counters for an in-flight Pinecone → DuckDB migration. |
 | `mxchat_plus_duckdb_cache_gen` | Monotonic integer (starts at 1). Woven into every query-cache transient key; bumped by writes via `MxChat_Plus_DuckDB_Cache::bump_cache_generation()` so cached top-K results become unreachable in O(1) without a `LIKE DELETE` over `wp_options`. Orphans expire via `query_cache_ttl`. |
 
-All of the above are deleted on plugin uninstall via [`uninstall.php`](../uninstall.php).
+All of the above are deleted on plugin uninstall via [`uninstall.php`](../../uninstall.php).
 
 ## Dimension / storage change guards
 
