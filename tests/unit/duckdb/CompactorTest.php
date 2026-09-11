@@ -334,5 +334,124 @@ final class CompactorTest extends TestCase {
         );
         $this->assertTrue($swept_fired, 'transient sweep must run before the freshness guard');
     }
-}
 
+    // ─── Regressions fixed in 1.0.0 ──────────────────────────────────────
+
+    /**
+     * The scan DELETEs from the table it is paging through. With LIMIT/OFFSET
+     * every delete shifts the remaining rows left while the offset kept
+     * advancing by a full page, so up to one page of vectors was skipped after
+     * each drain and one sweep could never compact everything. A keyset cursor
+     * on the ordering column is immune.
+     */
+    public function test_orphan_scan_pages_by_keyset_not_offset(): void {
+        $this->wpdb->set_response('SELECT id, url AS source_url', function () { return []; });
+
+        // A FULL first page (page_size = 1000) is required to make the scan
+        // ask for a second one: a short page means "end of table".
+        $first = [];
+        for ($i = 0; $i < 1000; $i++) {
+            $first[] = ['vector_id' => sprintf('orphan-%04d', $i)];
+        }
+        $this->mock_conn->pages = [$first, [['vector_id' => 'orphan-1000']], []];
+
+        $this->compactor()->run();
+
+        $scans = array_values(array_filter(
+            $this->mock_conn->log,
+            fn($sql) => stripos($sql, 'SELECT vector_id FROM') !== false
+        ));
+        $this->assertNotEmpty($scans);
+
+        foreach ($scans as $sql) {
+            $this->assertStringNotContainsStringIgnoringCase(
+                'OFFSET',
+                $sql,
+                'OFFSET paging skips rows while the same scan deletes from the table'
+            );
+        }
+        // The follow-up page must resume from the last id actually seen — not
+        // from a positional offset that the interleaved DELETEs have shifted.
+        $this->assertArrayHasKey(1, $scans, 'a full page must be followed by another scan');
+        $this->assertStringContainsStringIgnoringCase('WHERE vector_id >', $scans[1]);
+        $this->assertStringContainsString("'orphan-0999'", $scans[1]);
+    }
+
+    /**
+     * max_deletes is advertised as a hard ceiling (it exists to bound
+     * MotherDuck billing). Draining fixed 100-id chunks while only checking
+     * the budget beforehand overshot it by up to 99 rows on the last chunk.
+     */
+    public function test_delete_count_never_exceeds_max_deletes(): void {
+        $this->wpdb->set_response('SELECT id, url AS source_url', function () { return []; });
+
+        // 250 orphans, ceiling at 150 → the boundary falls mid-chunk.
+        $page = [];
+        for ($i = 0; $i < 250; $i++) {
+            $page[] = ['vector_id' => sprintf('orphan-%03d', $i)];
+        }
+        $this->mock_conn->pages = [$page, []];
+
+        $GLOBALS['__test_filter_overrides']['mxchat_plus_duckdb_compactor_max_deletes'] = 150;
+        try {
+            $result = $this->compactor()->run();
+        } finally {
+            unset($GLOBALS['__test_filter_overrides']['mxchat_plus_duckdb_compactor_max_deletes']);
+        }
+
+        $this->assertSame(150, $result['deleted'], 'the cap must be exact, not approximate');
+
+        $ids_deleted = 0;
+        foreach ($this->mock_conn->log as $sql) {
+            if (stripos($sql, 'DELETE FROM') !== false && stripos($sql, 'vector_id IN') !== false) {
+                $ids_deleted += substr_count($sql, "'orphan-");
+            }
+        }
+        $this->assertSame(150, $ids_deleted, 'no id may be deleted beyond the ceiling');
+    }
+
+    /**
+     * Vectors imported straight from Pinecone keep Pinecone's own ids, which
+     * need not follow the md5(url)[_chunk_N] convention the sync writes — so
+     * they look like orphans here. Pruning them would delete the very vectors
+     * the migration copied to avoid re-embedding, the night after the import.
+     */
+    public function test_orphan_pruning_is_disabled_after_a_pinecone_import(): void {
+        update_option(MxChat_Plus_DuckDB_Pinecone_Migrator::IMPORTED_MARKER_OPTION, [
+            'copied'      => 1200,
+            'namespace'   => 'default',
+            'imported_at' => time() - 3600,
+        ]);
+
+        $this->wpdb->set_response('SELECT id, url AS source_url', function () { return []; });
+        $this->mock_conn->pages = [[['vector_id' => 'pinecone-xyz']], []];
+
+        $result = $this->compactor()->run();
+
+        $this->assertTrue($result['ok']);
+        $this->assertSame(0, $result['deleted']);
+        $deletes = array_filter(
+            $this->mock_conn->log,
+            fn($sql) => stripos($sql, 'DELETE FROM') !== false && stripos($sql, 'vector_id IN') !== false
+        );
+        $this->assertEmpty($deletes, 'imported vectors must not be pruned');
+    }
+
+    public function test_a_site_can_re_enable_pruning_after_an_import(): void {
+        update_option(MxChat_Plus_DuckDB_Pinecone_Migrator::IMPORTED_MARKER_OPTION, ['copied' => 10]);
+        $this->assertFalse(MxChat_Plus_DuckDB_Compactor::orphan_pruning_allowed());
+
+        $GLOBALS['__test_filter_overrides']['mxchat_plus_duckdb_compactor_prune_orphans'] = true;
+        try {
+            $this->assertTrue(MxChat_Plus_DuckDB_Compactor::orphan_pruning_allowed());
+        } finally {
+            unset($GLOBALS['__test_filter_overrides']['mxchat_plus_duckdb_compactor_prune_orphans']);
+        }
+    }
+
+    public function test_pruning_is_allowed_when_nothing_was_imported(): void {
+        $this->assertTrue(MxChat_Plus_DuckDB_Compactor::orphan_pruning_allowed());
+        update_option(MxChat_Plus_DuckDB_Pinecone_Migrator::IMPORTED_MARKER_OPTION, ['copied' => 0]);
+        $this->assertTrue(MxChat_Plus_DuckDB_Compactor::orphan_pruning_allowed());
+    }
+}

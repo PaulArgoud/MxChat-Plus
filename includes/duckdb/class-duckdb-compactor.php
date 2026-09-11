@@ -99,6 +99,9 @@ class MxChat_Plus_DuckDB_Compactor {
     /** Cap on bots processed per sweep — guards a pathological bot count. */
     const SWEEP_MAX_BOTS = 200;
 
+    /** Ids per DELETE … IN (…), sized to stay under MotherDuck HTTP body limits. */
+    const DELETE_CHUNK_SIZE = 100;
+
     /**
      * Delete leftover query-cache transients from superseded cache generations.
      *
@@ -179,49 +182,113 @@ class MxChat_Plus_DuckDB_Compactor {
      * MotherDuck HTTP body limits.
      */
     private function prune_orphans(int $max_deletes): int {
+        if (!self::orphan_pruning_allowed()) {
+            return 0;
+        }
+
         $alive = $this->load_alive_ids();
 
         $store = new MxChat_Plus_DuckDB_Vector_Store();
         $store->ensure_schema();
         $conn = $store->connection();
+        $table = $store->table_name_quoted();
 
-        // Page through DuckDB vector_ids and remove orphans in batches.
-        $deleted = 0;
+        $deleted   = 0;
         $page_size = 1000;
-        $offset = 0;
-        $orphans = [];
+        $orphans   = [];
+        // Keyset (seek) cursor, NOT an OFFSET. The scan deletes from the very
+        // table it is paging through, and with OFFSET every delete shifts the
+        // remaining rows left while the offset keeps advancing by page_size —
+        // so up to one page of rows was skipped after each drain and a single
+        // sweep could never compact everything. A cursor on the ordering
+        // column is immune: it resumes from the last vector_id actually seen.
+        $cursor = null;
 
         while ($deleted < $max_deletes) {
-            $page = $conn->execute(sprintf(
-                'SELECT vector_id FROM %s ORDER BY vector_id LIMIT %d OFFSET %d',
-                $store->table_name_quoted(),
-                $page_size,
-                $offset
-            ));
-            if (empty($page)) break;
+            $page = $conn->execute(
+                $cursor === null
+                    ? sprintf('SELECT vector_id FROM %s ORDER BY vector_id LIMIT %d', $table, $page_size)
+                    : sprintf(
+                        "SELECT vector_id FROM %s WHERE vector_id > '%s' ORDER BY vector_id LIMIT %d",
+                        $table,
+                        str_replace("'", "''", $cursor),
+                        $page_size
+                    )
+            );
+            if (empty($page)) {
+                break;
+            }
 
             foreach ($page as $row) {
                 $id = (string) ($row['vector_id'] ?? '');
-                if ($id !== '' && !isset($alive[$id])) {
+                if ($id === '') {
+                    continue;
+                }
+                $cursor = $id;
+                if (!isset($alive[$id])) {
                     $orphans[] = $id;
                 }
             }
-            $offset += $page_size;
 
-            // Drain orphan buffer in chunks of 100 to avoid massive IN(…) lists.
-            while (count($orphans) >= 100 && $deleted < $max_deletes) {
-                $chunk = array_splice($orphans, 0, 100);
-                $deleted += $this->delete_chunk($conn, $store->table_name_quoted(), $chunk);
+            // Drain the buffer in chunks to avoid massive IN(…) lists.
+            while (count($orphans) >= self::DELETE_CHUNK_SIZE && $deleted < $max_deletes) {
+                $deleted += $this->flush_orphans($conn, $table, $orphans, $max_deletes - $deleted);
+            }
+
+            if (count($page) < $page_size) {
+                break; // short page → end of table
             }
         }
 
         // Final flush.
         while (!empty($orphans) && $deleted < $max_deletes) {
-            $chunk = array_splice($orphans, 0, 100);
-            $deleted += $this->delete_chunk($conn, $store->table_name_quoted(), $chunk);
+            $deleted += $this->flush_orphans($conn, $table, $orphans, $max_deletes - $deleted);
         }
 
         return $deleted;
+    }
+
+    /**
+     * Delete at most $budget ids from the head of $orphans.
+     *
+     * The budget is what keeps `max_deletes` an actual ceiling: draining fixed
+     * 100-id chunks while only testing `$deleted < $max_deletes` beforehand
+     * overshot the advertised cap by up to 99 rows on the final chunk.
+     *
+     * @param list<string> $orphans consumed in place
+     */
+    private function flush_orphans(
+        MxChat_Plus_DuckDB_Connection $conn,
+        string $table,
+        array &$orphans,
+        int $budget
+    ): int {
+        $size = min(self::DELETE_CHUNK_SIZE, $budget, count($orphans));
+        if ($size <= 0) {
+            return 0;
+        }
+        return $this->delete_chunk($conn, $table, array_splice($orphans, 0, $size));
+    }
+
+    /**
+     * Whether the nightly sweep may delete vectors that have no matching row
+     * in the MySQL knowledge base.
+     *
+     * It may not, once vectors have been imported straight from Pinecone. The
+     * migrator preserves Pinecone's own vector ids, which need not follow the
+     * md5(url)[_chunk_N] convention the sync writes — so those vectors look
+     * like orphans to this sweep and would be deleted the very night after a
+     * migration that was meant to avoid re-embedding them. The marker is set
+     * by the migrator and survives the completion of the run.
+     *
+     * Sites that know their imported ids do match can re-enable pruning:
+     *   add_filter('mxchat_plus_duckdb_compactor_prune_orphans', '__return_true');
+     */
+    public static function orphan_pruning_allowed(): bool {
+        $imported = get_option(MxChat_Plus_DuckDB_Pinecone_Migrator::IMPORTED_MARKER_OPTION, null);
+        $allowed  = !is_array($imported) || empty($imported['copied']);
+
+        return (bool) apply_filters('mxchat_plus_duckdb_compactor_prune_orphans', $allowed, $imported);
     }
 
     private function delete_chunk(MxChat_Plus_DuckDB_Connection $conn, string $quoted_table, array $ids): int {

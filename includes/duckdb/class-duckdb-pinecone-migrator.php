@@ -22,6 +22,14 @@ if (!defined('ABSPATH')) {
 class MxChat_Plus_DuckDB_Pinecone_Migrator {
 
     const STATE_OPTION = 'mxchat_plus_duckdb_pinecone_migration_state';
+
+    /**
+     * Durable record that vectors were imported from Pinecone. Unlike
+     * STATE_OPTION (a resume cursor, deleted once the run completes) this
+     * outlives the migration: the compactor consults it before pruning
+     * orphans. See MxChat_Plus_DuckDB_Compactor::orphan_pruning_allowed().
+     */
+    const IMPORTED_MARKER_OPTION = 'mxchat_plus_duckdb_pinecone_imported';
     const LIST_PAGE_SIZE = 100;
     const FETCH_BATCH = 100;
 
@@ -97,6 +105,24 @@ class MxChat_Plus_DuckDB_Pinecone_Migrator {
         }
 
         delete_option(self::STATE_OPTION);
+
+        // Durable marker, deliberately NOT the resumable state above (which is
+        // cleared on completion). The compactor reads it to stop treating
+        // imported vectors as orphans: Pinecone's ids are preserved verbatim by
+        // pinecone_to_row() and need not follow the md5(url)[_chunk_N] convention
+        // the sync writes, so without this the nightly sweep would delete the
+        // very vectors this migration copied in order to avoid re-embedding.
+        if ($copied > 0) {
+            $marker = get_option(self::IMPORTED_MARKER_OPTION, []);
+            $previous = is_array($marker) ? (int) ($marker['copied'] ?? 0) : 0;
+            update_option(self::IMPORTED_MARKER_OPTION, [
+                'copied'      => $previous + $copied,
+                'namespace'   => $this->namespace,
+                'host'        => $this->host,
+                'imported_at' => time(),
+            ], false);
+        }
+
         return [
             'copied'    => $copied,
             'failed'    => $failed,

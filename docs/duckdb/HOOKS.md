@@ -237,3 +237,22 @@ Beyond filters, two action hooks are useful:
 - **`mxchat_plus_duckdb_compact`** (cron, daily) — runs the orphan compactor. Same pattern.
 
 For deeper integration (custom backends, replacing the connection factory, etc.), the codebase uses dependency injection through constructors — see [ARCHITECTURE.md → Design conventions](../ARCHITECTURE.md#design-conventions).
+
+### `mxchat_plus_duckdb_compactor_prune_orphans`
+
+`bool $allowed, array|null $import_marker`
+
+Whether the nightly compactor may delete vectors that have no matching row in
+the MySQL knowledge base.
+
+Defaults to `true`, but flips to `false` once vectors have been imported
+directly from Pinecone. The migrator preserves Pinecone's own vector ids, which
+need not follow the `md5(url)[_chunk_N]` convention the sync writes — so those
+vectors look like orphans to the sweep and would be deleted the night after an
+import that was meant to avoid re-embedding them.
+
+Re-enable it if you know your imported ids do match the sync convention:
+
+```php
+add_filter( 'mxchat_plus_duckdb_compactor_prune_orphans', '__return_true' );
+```
