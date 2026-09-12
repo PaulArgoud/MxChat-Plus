@@ -19,7 +19,15 @@
 
 use PHPUnit\Framework\TestCase;
 
-if (!class_exists('MxChat_Plus_Tracking_Test_WPDB')) {
+// The second argument MUST stay false. composer.json maps `tests/` into the
+// autoload-dev classmap, so a CI-fresh `composer install` resolves
+// MxChat_Plus_Tracking_Test_WPDB to *this* file. An autoloading class_exists()
+// therefore re-includes the file while it is still being parsed: the nested
+// pass declares TrackingReportTest, the outer pass then reaches line 97 and
+// dies with "Cannot declare class TrackingReportTest". It passes locally only
+// while vendor/composer/autoload_classmap.php predates this file — run
+// `composer dump-autoload` and it fails here too.
+if (!class_exists('MxChat_Plus_Tracking_Test_WPDB', false)) {
 
     /**
      * Records every SQL it is handed and answers with canned rows matched by
