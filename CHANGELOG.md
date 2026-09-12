@@ -12,7 +12,13 @@ This plugin is the merge of two previously separate plugins. From 1.0.0 onward t
 
 ## [Unreleased]
 
-### Planned
+Nothing pending. Everything shipped so far is in [1.0.0](#100--2026-09-12) below,
+click tracking included. New entries go here, categorised per Keep a Changelog.
+
+## Roadmap
+
+Not a release section — nothing below is written yet, so none of it belongs under
+`[Unreleased]`, which Keep a Changelog reserves for changes already made.
 
 - Regenerate `phpstan-baseline.neon` from the merged tree and restore
   `reportUnmatchedIgnoredErrors: true` in `phpstan.neon.dist` (the baseline is currently
