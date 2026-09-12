@@ -23,7 +23,9 @@
 
 The vector-store and prompt-cache modules degrade **silently** when their prerequisite is
 missing: nothing errors, nothing is logged, the feature simply never engages. Check these
-before filing a bug. (The transcripts module has no such prerequisite.)
+before filing a bug. (The transcripts module has no such prerequisite. The tracking module
+has one, and it fails the same quiet way: events go nowhere unless a Matomo or GA4 tag is
+already loaded on the page — see [docs/tracking/USAGE.md](docs/tracking/USAGE.md).)
 
 ### (a) MxChat streaming must be OFF for prompt caching to do anything
 

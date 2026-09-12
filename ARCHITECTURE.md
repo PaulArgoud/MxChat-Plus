@@ -60,7 +60,7 @@ Priority **20** is not arbitrary: MxChat builds its globals on `plugins_loaded`
 at the default priority, so the host gate is only meaningful after it has run.
 
 **Class loading.** A static classmap
-(`includes/core/class-mxchat-plus-autoloader.php`) maps all 34 classes to their
+(`includes/core/class-mxchat-plus-autoloader.php`) maps all 38 classes to their
 files. This is deliberate, and it replaced a live fatal: the merged plugin used
 a hand-ordered `require_once` list when Composer was absent, and that list
 required the MotherDuck connection *before* its parent class — so any install
@@ -244,6 +244,20 @@ Not style preferences — each one silently breaks something when violated.
 - **Test shims load before the autoloader** (`tests/bootstrap.php`). Their
   `class_exists()` guards would otherwise pull in the real class and the test
   doubles would never take effect.
+- **In a test file, a `class_exists()` guard must pass `false` as its second
+  argument.** `composer.json` classmaps `tests/` into `autoload-dev`, so a fresh
+  `composer install` resolves a helper double to the very file being parsed. An
+  autoloading guard then re-includes that file mid-parse: the nested pass
+  declares the test class, the outer pass redeclares it, and PHP dies. A file
+  whose declarations are *all* guarded survives this by accident; one that mixes
+  guarded and unguarded declarations does not. It is invisible on a stale
+  `vendor/` and fatal on a clean clone — `composer dump-autoload` is what makes
+  it reproducible locally.
+- **The click tracker must listen in the capture phase and never cancel an
+  event.** MxChat binds its own handler directly on each `<a>` and calls
+  `stopPropagation()`, then navigates programmatically from its own AJAX
+  callback. A bubble-phase listener records nothing; a `preventDefault()` of
+  ours strands the visitor on relative links the host never bound.
 - **The prompt-cache model table is order-sensitive.**
   `min_chars_for_model()` tests `mythos-preview` before `mythos`, `haiku-4`
   before `haiku`. Reordering the clauses is a real regression — it already

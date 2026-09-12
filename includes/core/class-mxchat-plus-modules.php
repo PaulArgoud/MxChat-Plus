@@ -5,7 +5,7 @@
  * The features gathered in this plugin are functionally orthogonal — one
  * replaces the vector store, one caches LLM prompts, one exports transcripts,
  * one tracks clicks — and share no state. Keeping them separately switchable
- * means a site that only wants prompt caching never loads the 27 DuckDB
+ * means a site that only wants prompt caching never loads the 26 DuckDB
  * classes, and a retrieval problem can be bisected by turning one module off
  * rather than the whole plugin.
  */
