@@ -68,6 +68,9 @@ class MxChat_Plus_Admin {
         if (MxChat_Plus_Modules::is_enabled(MxChat_Plus_Modules::PROMPTCACHE)) {
             $tabs['promptcache'] = __('Prompt cache', 'mxchat-plus');
         }
+        if (MxChat_Plus_Modules::is_enabled(MxChat_Plus_Modules::TRACKING)) {
+            $tabs['tracking'] = __('Click tracking', 'mxchat-plus');
+        }
         return $tabs;
     }
 
@@ -106,6 +109,9 @@ class MxChat_Plus_Admin {
                 break;
             case 'promptcache':
                 MxChat_Plus_PromptCache_Admin::render_tab();
+                break;
+            case 'tracking':
+                MxChat_Plus_Tracking_Admin::render_tab();
                 break;
             default:
                 $this->render_modules_tab();

@@ -166,3 +166,21 @@ if (!function_exists('current_user_can')) {
         return $GLOBALS['__test_current_user_can'] ?? true;
     }
 }
+if (!function_exists('absint')) {
+    function absint($maybeint) {
+        return abs((int) $maybeint);
+    }
+}
+if (!function_exists('home_url')) {
+    // Overridable per test: the tracking report classifies a URL as internal or
+    // external by comparing its host with this one.
+    function home_url($path = '') {
+        $base = $GLOBALS['__test_home_url'] ?? 'https://example.test';
+        return $path === '' ? $base : rtrim($base, '/') . '/' . ltrim((string) $path, '/');
+    }
+}
+if (!function_exists('wp_parse_url')) {
+    function wp_parse_url($url, $component = -1) {
+        return parse_url((string) $url, $component);
+    }
+}

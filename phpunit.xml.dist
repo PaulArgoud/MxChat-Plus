@@ -21,6 +21,9 @@
         <testsuite name="transcripts">
             <directory>tests/unit/transcripts</directory>
         </testsuite>
+        <testsuite name="tracking">
+            <directory>tests/unit/tracking</directory>
+        </testsuite>
     </testsuites>
     <source>
         <include>

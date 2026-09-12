@@ -1,6 +1,6 @@
 # Architecture
 
-MxChat Plus extends [MxChat](https://mxchat.ai/) (`mxchat-basic`) with three
+MxChat Plus extends [MxChat](https://mxchat.ai/) (`mxchat-basic`) with four
 independent features. MxChat is **third-party software with its own update
 stream**, and that single fact shapes every design decision here.
 
@@ -15,7 +15,7 @@ the interesting part of this architecture is not *what* the modules do — it is
 
 ---
 
-## The three modules
+## The four modules
 
 Each is switchable on its own (**MxChat Plus → Modules**). They share no state,
 touch no common hook, and can be reasoned about separately. A site that only
@@ -26,6 +26,12 @@ wants prompt caching never loads the 26 autoloaded DuckDB classes.
 | `duckdb` | DuckDB / MotherDuck as the vector store, instead of Pinecone | REST endpoint speaking the Pinecone wire protocol |
 | `promptcache` | Anthropic prompt caching + cross-provider savings metrics | `http_request_args`, `http_response` |
 | `transcripts` | CSV export of selected conversations, or of a date range | `admin_enqueue_scripts` + an AJAX action of our own |
+| `tracking` | Matomo / GA4 events for link and suggestion clicks, plus a report over the host's own click table | `wp_enqueue_scripts` + a capture-phase DOM listener |
+
+`tracking` is the only module that **defaults to off**, and the only one that
+puts code on a public page. Both follow from the same fact: it is the one feature
+that sends data to a third party, which is a decision for the site owner rather
+than a default.
 
 ---
 
@@ -39,12 +45,15 @@ flowchart TD
     D --> E{duckdb on?}
     D --> F{promptcache on?}
     D --> G{transcripts on?}
+    D --> I{tracking on?}
     E -- yes --> E1["search adapter · REST proxy · health<br/>sync · compactor · mirror workers"]
     F -- yes --> F1["http_request_args · http_response"]
     G -- yes --> G1["admin assets on the host's transcripts screen"]
+    I -- yes --> I1["wp_enqueue_scripts<br/>(front end, outside the is_admin gate)"]
     E1 --> H["admin page, one tab per module"]
     F1 --> H
     G1 --> H
+    I1 --> H
 ```
 
 Priority **20** is not arbitrary: MxChat builds its globals on `plugins_loaded`
@@ -159,6 +168,44 @@ closure, so the selection is read back from the DOM instead. Both are
 concessions to the no-modification rule — documented here so they read as
 deliberate rather than sloppy.
 
+### Click tracking
+
+MxChat 3.2.21 **does** log link clicks server-side. `attachLinkTracking()`
+(`js/chat-script.js:2174-2227`) POSTs `mxchat_track_url_click`, and
+`MxChat_Integrator::mxchat_track_url_click()`
+(`includes/class-mxchat-integrator.php:14752-14793`) inserts into
+`{prefix}mxchat_url_clicks`. So the module is deliberately *not* a
+reimplementation of that: its admin half reads that table and reports on it,
+because the host only ever shows a `DISTINCT clicked_url` list per conversation
+and exposes nothing in its CSV or REST output.
+
+The browser half exists for what the table structurally cannot hold: what the
+visitor does *after* following the link. Three host facts shape it, and each is
+load-bearing:
+
+- **The listener must be in the capture phase.** The host binds its own handler
+  directly on each `<a>` and calls `stopPropagation()`
+  (`js/chat-script.js:2193-2195`). A bubble-phase listener on `document` never
+  sees a link click at all. Capture runs on the way down and always fires.
+- **The handler must never call `preventDefault()`.** The host cancels the event
+  itself and navigates programmatically from its own AJAX completion callback
+  (`:2205-2219`). Cancelling the links it does *not* bind — every relative one —
+  would strand the visitor on the page with no error anywhere.
+- **Bot id and session id come from the host's own globals.**
+  `window.getBotIdFromElement` and `window.getChatSession` are exported at
+  `js/chat-script.js:4426-4432` "for add-ons". Re-deriving them from the DOM is
+  what the standalone predecessor did, and it got both wrong: the suggestion
+  buttons live in `#mxchat-popular-questions-{botId}`, a **sibling** of
+  `#chat-box-{botId}` (`includes/class-mxchat-public.php:366-370`), so a
+  chat-box walk resolves nothing for them; and a hand-rolled cookie read misses
+  the in-memory session the host keeps when cookies and localStorage are both
+  blocked.
+
+The dependency array of the enqueue is empty **on purpose**: under MxChat's
+`delay` and `interaction` loading strategies the host never registers its
+`mxchat-chat-js` handle, and WordPress silently drops any script whose
+dependency is missing.
+
 ---
 
 ## Repository layout
@@ -171,10 +218,12 @@ includes/
   duckdb/                    vector store — see docs/duckdb/ARCHITECTURE.md
   promptcache/               cache_control injection, metrics, CLI, dashboard
   transcripts/               CSV export of the host's selected conversations
+  tracking/                  Matomo/GA4 click events + report over mxchat_url_clicks
 admin/views/duckdb/          settings view + section partials
-assets/js/                   admin scripts
+admin/views/tracking/        settings view (form + clicked-links report)
+assets/js/                   admin scripts, plus tracking.js (the only front-end one)
 languages/                   .pot, .po and the compiled .mo (shipped)
-tests/unit/{duckdb,promptcache,transcripts}/   one suite per module
+tests/unit/{duckdb,promptcache,transcripts,tracking}/   one suite per module
 tools/patches/               optional upstream patch — excluded from the release zip
 ```
 

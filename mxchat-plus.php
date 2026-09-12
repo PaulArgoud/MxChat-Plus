@@ -37,6 +37,11 @@ define('MXCHAT_PLUS_URL', plugin_dir_url(__FILE__));
 define('MXCHAT_PLUS_BASENAME', plugin_basename(__FILE__));
 
 define('MXCHAT_PLUS_DUCKDB_OPTION_KEY', 'mxchat_plus_duckdb_options');
+// Renamed from the standalone plugin's `mxchat_tracking_options`: the
+// mxchat_plus_ prefix is the only thing separating our options from the host's,
+// and a key called mxchat_* reads as one of MxChat's own.
+// MxChat_Plus_Tracking_Options::migrate_legacy() carries the old value over.
+define('MXCHAT_PLUS_TRACKING_OPTION_KEY', 'mxchat_plus_tracking_options');
 
 require_once MXCHAT_PLUS_DIR . 'includes/core/class-mxchat-plus-autoloader.php';
 MxChat_Plus_Autoloader::register();
@@ -79,6 +84,15 @@ class MxChat_Plus_Plugin {
         }
         if (!empty($modules[MxChat_Plus_Modules::TRANSCRIPTS]) && is_admin()) {
             MxChat_Plus_Transcripts_Export::instance()->register_hooks();
+        }
+        if (!empty($modules[MxChat_Plus_Modules::TRACKING])) {
+            // The only module with a public-facing half: the tracker itself
+            // hooks wp_enqueue_scripts, so it must be registered outside the
+            // is_admin() gate below.
+            MxChat_Plus_Tracking::instance()->register_hooks();
+            if (is_admin()) {
+                MxChat_Plus_Tracking_Admin::register_hooks();
+            }
         }
 
         if (is_admin()) {
@@ -152,6 +166,12 @@ class MxChat_Plus_Plugin {
 
     public static function activate(): void {
         MxChat_Plus_Modules::install_defaults();
+
+        // Runs whether or not the tracking module is enabled: a site coming
+        // from the standalone MxChat Link Tracking plugin should find its
+        // settings intact the day it switches the module on, not reset to
+        // defaults. The call is idempotent and a no-op without a legacy option.
+        MxChat_Plus_Tracking_Options::migrate_legacy();
 
         if (MxChat_Plus_Modules::is_enabled(MxChat_Plus_Modules::DUCKDB)) {
             MxChat_Plus_DuckDB_Options::install_defaults();

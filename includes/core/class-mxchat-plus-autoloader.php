@@ -69,6 +69,13 @@ class MxChat_Plus_Autoloader {
 
         // Transcripts module — CSV export of the host's selected conversations
         'MxChat_Plus_Transcripts_Export'            => 'includes/transcripts/class-transcripts-export.php',
+
+        // Tracking module — Matomo/GA4 click events + a report over the host's
+        // own mxchat_url_clicks table
+        'MxChat_Plus_Tracking'                      => 'includes/tracking/class-tracking.php',
+        'MxChat_Plus_Tracking_Admin'                => 'includes/tracking/class-tracking-admin.php',
+        'MxChat_Plus_Tracking_Options'              => 'includes/tracking/class-tracking-options.php',
+        'MxChat_Plus_Tracking_Report'               => 'includes/tracking/class-tracking-report.php',
     ];
 
     public static function register(): void {

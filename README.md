@@ -10,10 +10,11 @@
   <a href="https://github.com/paulargoud/mxchat-plus/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/paulargoud/mxchat-plus/actions/workflows/ci.yml/badge.svg"></a>
 </p>
 
-> **One companion plugin, three modules**, for the third-party [MxChat](https://mxchat.ai/)
+> **One companion plugin, four modules**, for the third-party [MxChat](https://mxchat.ai/)
 > chatbot plugin (`mxchat-basic`) — a **DuckDB / MotherDuck vector store** that replaces
-> Pinecone, **Anthropic prompt caching** that cuts input-token cost on Claude calls, and a
-> **CSV export of the transcripts you actually selected**. It hooks MxChat entirely through
+> Pinecone, **Anthropic prompt caching** that cuts input-token cost on Claude calls, a
+> **CSV export of the transcripts you actually selected**, and **Matomo / GA4 events for the
+> links and suggested questions visitors click**. It hooks MxChat entirely through
 > WordPress filters and **never modifies a single file** of the host plugin.
 
 ---
@@ -73,13 +74,14 @@ project otherwise never does (and which an MxChat update will revert).
 
 ---
 
-## The three modules
+## The four modules
 
 | Module | What it does | Where it lives |
 |---|---|---|
 | **DuckDB / MotherDuck vector store** | Stores MxChat's vector knowledge base in an embedded `.duckdb` file or in MotherDuck cloud, with HNSW-indexed similarity search, hybrid BM25 + vector retrieval, a query cache, Parquet export/import and a Pinecone → DuckDB migrator. Presents itself to MxChat as a Pinecone endpoint. | `includes/duckdb/`, `admin/views/duckdb/`, [`docs/duckdb/`](docs/duckdb/) |
 | **Prompt caching** | Injects Anthropic `cache_control` breakpoints (tools, system, and a rolling pair on the last two user messages) into outbound Claude requests, and measures cached tokens across Anthropic, OpenAI, OpenRouter, xAI, DeepSeek and Gemini. | `includes/promptcache/`, [`docs/promptcache/USAGE.md`](docs/promptcache/USAGE.md) |
 | **Transcripts CSV export** | Adds an export button to MxChat's transcripts screen: exports the conversations you ticked, or — with nothing ticked — every conversation between two dates, through a modal styled like the host's own. UTF-8 BOM for Excel, CSV-injection neutralised, 2000 conversations per export. | `includes/transcripts/`, [`docs/transcripts/USAGE.md`](docs/transcripts/USAGE.md) |
+| **Click tracking** | Sends a Matomo (and optionally GA4) event when a visitor clicks a link inside a bot answer or a suggested question, internal and external distinguished, with the conversation's session id attached. Adds an admin report over the clicks MxChat already logs server-side but never aggregates. **Off by default** — the only module that puts code on public pages. | `includes/tracking/`, `admin/views/tracking/`, [`docs/tracking/USAGE.md`](docs/tracking/USAGE.md) |
 
 The modules are independent: each can be left idle without affecting the others. They share
 only the plugin bootstrap, the `mxchat_plus_*` option namespace, the `mxchat-plus` text
@@ -112,6 +114,24 @@ its own nonce. The host renders that toolbar itself and exposes no hook to rende
 the button is injected client-side and re-injected after each list re-render; the selection
 is read back from the checkboxes, because the host keeps its `selectedSessions` Set private
 to its own closure.
+
+### Why click tracking
+
+MxChat 3.2.21 does log link clicks server-side, into its own `wp_mxchat_url_clicks` table —
+but only for **absolute `http(s)` links** (`js/chat-script.js:2188`), so a relative link the
+assistant writes is never recorded; it does not record internal vs external; it does not
+track suggested questions at all (its `.mxchat-popular-question` handler just sends the
+question); and it surfaces the result as nothing more than a `DISTINCT clicked_url` list per
+conversation, absent from its CSV export and its REST API.
+
+This module covers both halves of that gap. The browser half sends the events to the
+analytics stack the site already runs — which is the only way to see what a visitor does
+*after* leaving for the link, something no WordPress table can tell you. The admin half
+turns the host's own table into an actual report, with counts and an export.
+
+The two count different populations and **will not match**: ad-blockers suppress the Matomo
+events but never the host's table, and the host's table misses every relative link and every
+suggestion. That is by construction, not a bug.
 
 ---
 
@@ -172,13 +192,28 @@ and use **Plugins → Add New → Upload Plugin**.
 3. Tick some conversations and click the download icon next to **Delete Selected** to
    export those; click it with nothing ticked to pick a date range instead.
 
+**Click tracking module**
+
+1. Enable it in **MxChat Plus → Modules** — it ships **off**, unlike the other three.
+2. Open the **Click tracking** tab and switch on Matomo, GA4, or both. Nothing is sent, and
+   no script is even enqueued, while both are off.
+3. Matomo needs no site id here: events ride the tracker already on the page. Optionally
+   create an Action-scope custom dimension in Matomo and enter its number to receive the
+   session id there rather than appended to the event name.
+4. Tick **Debug** temporarily and watch the DevTools console for `[MxChat Plus tracking]`
+   lines — then untick it; it logs for every visitor, not just administrators.
+
 ## Relationship to the host plugin
 
 `mxchat-basic` is a **third-party plugin and is never modified.** Everything happens
 through WordPress hooks: `http_request_args` / `http_response` for prompt caching,
-MxChat's own Pinecone-configuration filters plus a REST endpoint for the vector store, and
+MxChat's own Pinecone-configuration filters plus a REST endpoint for the vector store,
 `admin_enqueue_scripts` plus an own-namespace `wp_ajax_` action for the transcripts export
-(whose button is injected client-side, because the host's toolbar offers no hook).
+(whose button is injected client-side, because the host's toolbar offers no hook), and
+`wp_enqueue_scripts` for the click tracker — which observes the host's widget from a
+document-level listener in the **capture** phase, because the host binds its own handler
+directly on each `<a>` and calls `stopPropagation()`, and reads the bot id and session id
+through the globals MxChat itself exports for add-ons.
 
 Consequently the host's own symbols are used **verbatim, never renamed**: `mxchat_options`,
 `mxchat_active_embedding_model`, `mxchat_system_prompt_content`, `mxchat_embedding_chunk_meta`,
@@ -192,7 +227,7 @@ codebase, it belongs to the host and must stay exactly as it is.
 
 | Doc | What's in it |
 |---|---|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | **Start here.** Boot sequence, the three modules, and the real integration surface of MxChat 3.2.21 — which hooks exist, which don't, and the traps. |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | **Start here.** Boot sequence, the four modules, and the real integration surface of MxChat 3.2.21 — which hooks exist, which don't, and the traps. |
 | [docs/duckdb/ARCHITECTURE.md](docs/duckdb/ARCHITECTURE.md) | How the vector store wires into MxChat, query lifecycle, file layout, design conventions. |
 | [docs/duckdb/CONFIGURATION.md](docs/duckdb/CONFIGURATION.md) | Every option, sidecar options, where data lives, dimension/storage change guards. |
 | [docs/duckdb/HOOKS.md](docs/duckdb/HOOKS.md) | Filters and actions the DuckDB module exposes. |
@@ -202,6 +237,7 @@ codebase, it belongs to the host and must stay exactly as it is.
 | [docs/duckdb/BACKUP.md](docs/duckdb/BACKUP.md) | Backup + restore workflow and disaster-recovery checklist. |
 | [docs/promptcache/USAGE.md](docs/promptcache/USAGE.md) | Breakpoint strategy, per-model thresholds, filters, CLI, reading the hit rate. |
 | [docs/transcripts/USAGE.md](docs/transcripts/USAGE.md) | The two export modes, the exact CSV format, the 2000-conversation cap, security, troubleshooting. |
+| [docs/tracking/USAGE.md](docs/tracking/USAGE.md) | Matomo and GA4 setup, the event names, the overlap with MxChat's own click table, privacy, troubleshooting. |
 | [tools/patches/README.md](tools/patches/README.md) | The optional, currently-inapplicable upstream patch (Option A). |
 | [CHANGELOG.md](CHANGELOG.md) | Release history, including both pre-merge histories. |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Filing bugs, sending PRs, running the test suite. |
@@ -250,6 +286,28 @@ codebase, it belongs to the host and must stay exactly as it is.
   host's storage — it is the same schema the host's own export reads.
 - **One synchronous request, no progress indicator.** A wide date range on a busy install
   can produce a very large file.
+
+**Click tracking**
+
+- **It hooks selectors and globals the host does not guarantee.** `.bot-message`,
+  `.mxchat-popular-question`, `window.getBotIdFromElement` and `window.getChatSession` are
+  MxChat internals. They all exist in 3.2.21 and the globals are exported "for add-ons", but
+  none is a documented contract: a rename in a future release stops the events with no error
+  anywhere. Turn on **Debug** to check after a host update.
+- **Ad-blockers suppress it entirely.** Matomo and GA4 are both commonly blocked; the
+  events simply never leave. The admin report, which reads the host's server-side table,
+  is unaffected — which is exactly why the two never reconcile.
+- **The first click can carry no session id.** MxChat creates the session lazily — on the
+  first message sent, or on widget open only when chat persistence is on. A click that
+  precedes that reports an empty session id rather than a wrong one.
+- **No consent management.** The only signal the host exposes is
+  `mxchatChat.complianz_toggle`, and it reflects the *marketing* category, not *statistics*.
+  Nothing is wired to it: if your site needs consent gating, gate the Matomo/GA4 tag itself.
+- **`send_session_id` sends a join key off-site.** It links an analytics event to a row in
+  the host's transcripts table, and an erasure request handled by WordPress does not reach
+  Matomo or GA4. Turning it off is the conservative choice.
+- **The report only counts absolute `http(s)` links.** That is the host's table's own
+  limitation, not ours — it never logged relative links or suggested questions.
 
 ## Contributing
 

@@ -1,6 +1,6 @@
 === MxChat Plus ===
 Contributors: paulargoud
-Tags: mxchat, vector-search, duckdb, prompt-caching, csv-export
+Tags: mxchat, vector-search, duckdb, prompt-caching, matomo
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 8.1
@@ -8,12 +8,12 @@ Stable tag: 1.0.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Three modules for MxChat: a DuckDB / MotherDuck vector store replacing Pinecone, Anthropic prompt caching, and a CSV export of selected transcripts.
+Four modules for MxChat: a DuckDB / MotherDuck vector store replacing Pinecone, Anthropic prompt caching, a CSV export of selected transcripts, and Matomo / GA4 click tracking.
 
 == Description ==
 
 **MxChat Plus** is a companion plugin for [MxChat](https://mxchat.ai/) (`mxchat-basic`).
-It bundles three independent modules and wires them all in through WordPress hooks only —
+It bundles four independent modules and wires them all in through WordPress hooks only —
 **no file of the host plugin is ever modified**.
 
 = Module 1 — DuckDB / MotherDuck vector store =
@@ -75,6 +75,33 @@ transcripts table and ignores the checkboxes; this one exports what you actually
 * Nothing to configure: the module is enabled from **MxChat Plus &rarr; Modules** and that
   is the whole setup.
 
+= Module 4 — Link and suggestion click tracking =
+
+Sends an analytics event when a visitor clicks a link inside a chatbot answer, or one of
+the suggested questions. **This module ships disabled** — it is the only one that puts code
+on public pages and the only one that sends data to a third party.
+
+* **Matomo**: events under the category `MxChat`, with the actions `Clic lien interne`,
+  `Clic lien externe` and `Clic suggestion`. The site id is the one in the Matomo snippet
+  already on the page — there is nothing to enter. External links are additionally reported
+  as outlinks.
+* **Google Analytics 4** (optional): `mxchat_link_click` and `mxchat_suggestion_click`,
+  with the URL, link text, internal/external scope, target, bot id and session id. Requires
+  `gtag()` to be loaded by something else; the module never injects the GA4 tag.
+* The conversation's session id can be attached to every event, either in a Matomo custom
+  dimension you nominate or appended to the event name. It can also be switched off — it is
+  a join key into the transcripts table, and analytics vendors sit outside MxChat's own
+  erasure path.
+* **Clicked links report**: MxChat logs clicks on absolute links server-side but only ever
+  shows them as an unordered list inside one conversation. The module's tab turns that table
+  into a ranked report — clicks, distinct sessions, internal/external, last click — with a
+  CSV export. IP and user agent are deliberately never shown: the host destroys them after
+  30 days by design.
+* Both counts measure different things and will not match: ad-blockers suppress the analytics
+  events but never the host's table, and the host's table never recorded relative links or
+  suggested questions.
+* Nothing is sent, and no script is even enqueued, while both destinations are off.
+
 = Requirements =
 
 * PHP 8.1+
@@ -116,7 +143,7 @@ domain (MxChat hardcodes `https://`), pretty permalinks (not the "Plain" setting
 
 = Does this modify MxChat? =
 
-No. Never. All three modules attach through WordPress hooks. The host plugin's own options,
+No. Never. All four modules attach through WordPress hooks. The host plugin's own options,
 filters, AJAX actions and nonces are used verbatim and are never renamed. An optional
 patch shipped under `tools/patches/` would let the vector store skip one HTTP hop, but it
 targets a filter that does not exist in mxchat-basic 3.2.21, it is inert by default, and
@@ -154,6 +181,20 @@ Source strings are English (vector store) and French (prompt cache); a complete 
 catalogue ships compiled. The `.pot` template is included for other locales. The text
 domain is `mxchat-plus` and nothing else.
 
+One deliberate exception: the three Matomo action labels sent by the tracking module
+(`Clic lien interne`, `Clic lien externe`, `Clic suggestion`) are **not** translatable.
+They are analytics dimensions, not interface text — translating them would start a fresh
+set of rows in Matomo and split the site's click history in two.
+
+= Why does the clicked-links report disagree with my Matomo numbers? =
+
+Because they count different populations, by construction. The report reads the table
+MxChat fills server-side, which only ever recorded absolute `http(s)` links inside answers
+— never a relative link, never a suggested question. The Matomo events cover all of those,
+but ad-blockers suppress them, while the server-side table is never affected. Expect the
+report to be lower on suggestions and relative links, and higher wherever visitors block
+analytics.
+
 == Changelog ==
 
 = 1.0.0 =
@@ -162,13 +203,21 @@ domain is `mxchat-plus` and nothing else.
   vectors imported from Pinecone were treated as orphans and deleted the night after
   the import; a boot fatal on installs made without Composer.
 * First release of the merged plugin: the former **MxChat DuckDB / MotherDuck** (0.13.0)
-  and **MXChat Prompt Cache** (0.8.0) now ship as two modules of one plugin, joined by a
-  new third one.
+  and **MXChat Prompt Cache** (0.8.0) now ship as two modules of one plugin, joined by two
+  new ones.
 * New **transcripts CSV export** module: a button on MxChat's transcripts screen that
   exports the conversations you ticked, or — with nothing ticked — every conversation
   between two dates chosen in a modal. UTF-8 BOM for Excel, CSV formula injection
   neutralised, `manage_options` + dedicated nonce + prepared statements, 2000 conversations
   per export. The host's own export ignores the selection and dumps the whole table.
+* New **click tracking** module, absorbing the standalone *MxChat Link Tracking* plugin:
+  Matomo (and optionally GA4) events for clicks on links inside answers and on suggested
+  questions, internal and external distinguished, with the conversation's session id
+  optionally attached. Adds a clicked-links report over the table MxChat fills server-side
+  but only ever displays one conversation at a time. **Ships disabled** — it is the only
+  module that puts code on public pages. Two silent defects of the standalone plugin are
+  fixed on the way in: suggestion clicks were attributed to the wrong bot, and visitors
+  with cookies and localStorage both blocked reported no session id.
 * Unified naming: `MxChat_Plus_*` classes, `MXCHAT_PLUS_*` constants, `mxchat_plus_*`
   options and hooks, and a single `mxchat-plus` text domain.
 * Unified WP-CLI root: `wp mxchat-plus duckdb …` and `wp mxchat-plus promptcache …`.
@@ -187,3 +236,12 @@ The per-module history before the merge is preserved in `CHANGELOG.md`.
 Replaces the separate mxchat-duckdb and mxchat-promptcache plugins. Deactivate and delete
 both before activating MxChat Plus, then re-check your settings: option keys moved to the
 `mxchat_plus_*` namespace. Requires PHP 8.1 and mxchat-basic 3.2.21+.
+
+If you were running the standalone **MxChat Link Tracking** plugin, deactivate it before
+enabling the click tracking module — otherwise both scripts listen at once and every click
+is counted twice in Matomo. Its settings are carried over for you
+(`mxchat_tracking_options` → `mxchat_plus_tracking_options`), but the copy runs **when
+MxChat Plus is activated**, so if MxChat Plus was already active before you removed the old
+plugin, deactivate and reactivate it once to pick the settings up. The old option is deleted
+after the copy, and deleting the standalone plugin does not remove it beforehand — it ships
+no uninstall routine.

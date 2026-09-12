@@ -26,6 +26,7 @@ if (!defined('MXCHAT_PLUS_DIR')) define('MXCHAT_PLUS_DIR',        dirname(__DIR_
 if (!defined('MXCHAT_PLUS_FILE')) define('MXCHAT_PLUS_FILE',       MXCHAT_PLUS_DIR . 'mxchat-plus.php');
 if (!defined('MXCHAT_PLUS_URL')) define('MXCHAT_PLUS_URL',        'http://example.test/');
 if (!defined('MXCHAT_PLUS_DUCKDB_OPTION_KEY')) define('MXCHAT_PLUS_DUCKDB_OPTION_KEY', 'mxchat_plus_duckdb_options');
+if (!defined('MXCHAT_PLUS_TRACKING_OPTION_KEY')) define('MXCHAT_PLUS_TRACKING_OPTION_KEY', 'mxchat_plus_tracking_options');
 // ───── WordPress / Action Scheduler / WP-CLI / MxChat shims ─────────────
 require_once __DIR__ . '/shims/wp-functions.php';
 require_once __DIR__ . '/shims/wp-classes.php';

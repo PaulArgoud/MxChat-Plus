@@ -32,19 +32,21 @@ This plugin is the merge of two previously separate plugins. From 1.0.0 onward t
   English and French msgids.
 - PDF / attachment reprocessing; per-bot configuration UI for multi-bot installs.
 
-## [1.0.0] — 2026-09-11
+## [1.0.0] — 2026-09-12
 
 The first release of the merged plugin. **MxChat DuckDB / MotherDuck** 0.13.0 and
 **MXChat Prompt Cache** 0.8.0 become two modules of a single plugin, `mxchat-plus`, joined
-by a third, new one: the transcripts CSV export.
+by two new ones: the transcripts CSV export, and click tracking — which also absorbs the
+standalone *MxChat Link Tracking* plugin.
 
 ### Added
 
-- **One plugin, three modules.** `includes/duckdb/` (vector store),
-  `includes/promptcache/` (Anthropic prompt caching) and `includes/transcripts/` (CSV
-  export of transcripts) boot from a single plugin file and share a bootstrap, an option
-  namespace, a text domain and a CLI root. Each module is independently idle-able from
-  **MxChat Plus → Modules**.
+- **One plugin, four modules.** `includes/duckdb/` (vector store),
+  `includes/promptcache/` (Anthropic prompt caching), `includes/transcripts/` (CSV
+  export of transcripts) and `includes/tracking/` (Matomo / GA4 click events) boot from a
+  single plugin file and share a bootstrap, an option namespace, a text domain and a CLI
+  root. Each module is independently idle-able from **MxChat Plus → Modules**; `tracking`
+  is the only one that starts off.
 - **Transcripts CSV export module** (`includes/transcripts/`,
   `assets/js/admin-transcripts-export.js`, guide in
   [docs/transcripts/USAGE.md](docs/transcripts/USAGE.md)). MxChat ships
@@ -92,6 +94,34 @@ by a third, new one: the transcripts CSV export.
   not match the `.po`, and one that fails on any surviving legacy text domain.
 - A release check that fails when the git tag, the `Version:` header in `mxchat-plus.php`
   and the `Stable tag:` in `readme.txt` disagree.
+- **Click tracking module** (`includes/tracking/`, `assets/js/tracking.js`,
+  `admin/views/tracking/`, guide in [docs/tracking/USAGE.md](docs/tracking/USAGE.md)).
+  Folds in the standalone *MxChat Link Tracking* plugin and adds the report its data never
+  had. It is the **only module that defaults to off**, and the plugin's only public-facing
+  surface: every other module is admin-gated or filter-only.
+  - **Matomo events** under the category `MxChat`, actions `Clic lien interne`,
+    `Clic lien externe` and `Clic suggestion`; external destinations also reported via
+    `trackLink`. The site id is whatever the page's existing Matomo snippet uses. Those
+    three labels are deliberately not translatable — they are analytics dimensions, and
+    translating them would fork the site's click history in two.
+  - **GA4 events** (optional): `mxchat_link_click` and `mxchat_suggestion_click`. Requires
+    `gtag()` from elsewhere — the module never injects the tag.
+  - **Session id**, optional, either in a Matomo custom dimension you nominate (1–999) or
+    appended to the event name when none is configured.
+  - **Clicked-links report** over the host's own `{prefix}mxchat_url_clicks` table, with
+    click and distinct-session counts, internal/external classification against
+    `home_url()`, an optional date range and a CSV export. MxChat logs those clicks but
+    only ever shows a `DISTINCT clicked_url` list per conversation, absent from its own CSV
+    and REST output. `user_ip` and `user_agent` are never read: the host anonymises them at
+    30 days by design.
+  - Settings live in their own `mxchat_plus_tracking` Settings API group, deliberately
+    **not** the shared `mxchat-plus` group — `options.php` nulls every option of the
+    submitted group absent from `$_POST`, so sharing it would wipe this option whenever the
+    DuckDB tab is saved.
+  - `MxChat_Plus_Tracking_Options::migrate_legacy()` carries the standalone plugin's
+    `mxchat_tracking_options` over to `mxchat_plus_tracking_options` once, at activation,
+    then deletes the old row — its absence is the "already migrated" marker. The rename was
+    not cosmetic: an `mxchat_`-prefixed option reads as one of the host's own.
 
 ### Changed
 
@@ -151,6 +181,15 @@ Defects inherited from the pre-merge plugins, each now covered by a regression t
 - **Prompt-cache robustness:** `wp_json_encode()` returning `false` no longer produces an
   empty body, a non-array `headers` value is no longer overwritten (which could drop
   `x-api-key`), and the `anthropic-beta` header is read case-insensitively.
+- Two defects inherited from the standalone *MxChat Link Tracking* plugin, both silent:
+  - **Suggestion clicks resolved the wrong bot.** Bot id was derived by walking up to
+    `[id^="chat-box-"]`, but `#mxchat-popular-questions-{botId}` is a *sibling* of
+    `#chat-box-{botId}` (`mxchat-basic/includes/class-mxchat-public.php:366-370`), so the
+    walk found nothing and every suggestion fell back to the default bot's session. Now
+    resolved through `window.getBotIdFromElement`, which MxChat exports for add-ons.
+  - **Visitors with cookies and localStorage both blocked reported no session id.** The
+    hand-rolled cookie read could not see the in-memory copy the host keeps in that case
+    (Safari ITP, partitioned storage). Now read through `window.getChatSession`.
 
 ### Preserved deliberately
 

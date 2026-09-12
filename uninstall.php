@@ -18,9 +18,10 @@ if (!defined('WP_UNINSTALL_PLUGIN')) {
 
 require_once __DIR__ . '/includes/duckdb/uninstall-duckdb.php';
 require_once __DIR__ . '/includes/promptcache/uninstall-promptcache.php';
+require_once __DIR__ . '/includes/tracking/uninstall-tracking.php';
 
 /**
- * Clean one site. Both modules are purged regardless of whether they were
+ * Clean one site. Every module is purged regardless of whether it was
  * enabled: a module switched off still leaves its options behind, and
  * uninstall means uninstall.
  */
@@ -30,6 +31,9 @@ function mxchat_plus_uninstall_cleanup_site(bool $delete_data): void {
     }
     if (function_exists('mxchat_plus_promptcache_uninstall_cleanup_site')) {
         mxchat_plus_promptcache_uninstall_cleanup_site();
+    }
+    if (function_exists('mxchat_plus_tracking_uninstall_cleanup_site')) {
+        mxchat_plus_tracking_uninstall_cleanup_site();
     }
     delete_option('mxchat_plus_modules');
 }

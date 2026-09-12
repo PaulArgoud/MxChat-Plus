@@ -1062,3 +1062,190 @@ msgstr ""
 #: includes/transcripts/class-transcripts-export.php:169
 msgid "Timestamp"
 msgstr ""
+
+#. translators: 1: lowest valid dimension id, 2: highest valid dimension id
+#: includes/tracking/class-tracking-options.php:111
+#, php-format
+msgid ""
+"The Matomo custom dimension ID must be a number between %1$d and %2$d. The "
+"value entered was ignored, and no custom dimension will be sent."
+msgstr ""
+
+#: includes/tracking/class-tracking-report.php:246
+msgid "You do not have sufficient permissions to export link clicks."
+msgstr ""
+
+#: includes/tracking/class-tracking-report.php:252
+msgid ""
+"MxChat has never recorded a link click on this site: its click table does "
+"not exist."
+msgstr ""
+
+#: includes/tracking/class-tracking-report.php:265
+msgid "No link clicks found for that period."
+msgstr ""
+
+#: includes/tracking/class-tracking-report.php:284
+#: admin/views/tracking/settings.php:180
+msgid "URL"
+msgstr ""
+
+#: includes/tracking/class-tracking-report.php:285
+#: admin/views/tracking/settings.php:181
+msgid "Scope"
+msgstr ""
+
+#: includes/tracking/class-tracking-report.php:286
+#: admin/views/tracking/settings.php:182
+msgid "Clicks"
+msgstr ""
+
+#: includes/tracking/class-tracking-report.php:287
+#: admin/views/tracking/settings.php:183
+msgid "Sessions"
+msgstr ""
+
+#: includes/tracking/class-tracking-report.php:290
+msgid "Last click (UTC)"
+msgstr ""
+
+#: includes/tracking/class-tracking-report.php:297
+#: admin/views/tracking/settings.php:212
+msgid "Internal"
+msgstr ""
+
+#: includes/tracking/class-tracking-report.php:298
+#: admin/views/tracking/settings.php:214
+msgid "External"
+msgstr ""
+
+#: admin/views/tracking/settings.php:25
+#: includes/core/class-mxchat-plus-admin.php:72
+msgid "Click tracking"
+msgstr ""
+
+#: admin/views/tracking/settings.php:29
+msgid ""
+"Sends an analytics event when a visitor clicks a link inside a chatbot "
+"answer, or a suggested question. Nothing leaves the page until one of the "
+"two destinations below is switched on."
+msgstr ""
+
+#: admin/views/tracking/settings.php:43
+msgid "Destinations"
+msgstr ""
+
+#: admin/views/tracking/settings.php:48
+msgid "Send events to Matomo"
+msgstr ""
+
+#: admin/views/tracking/settings.php:52
+msgid ""
+"Events go through the Matomo tracker already loaded on the page, so the site "
+"id is the one in your existing Matomo snippet — there is nothing to enter "
+"here. On a page with no Matomo snippet, nothing is sent."
+msgstr ""
+
+#: admin/views/tracking/settings.php:60
+msgid "Send events to Google Analytics 4"
+msgstr ""
+
+#: admin/views/tracking/settings.php:64
+msgid ""
+"Requires gtag() to be loaded by something else — a GA4 plugin, a tag "
+"manager, or the snippet in your theme. This module never injects the GA4 tag "
+"itself, and sends nothing when gtag() is absent."
+msgstr ""
+
+#: admin/views/tracking/settings.php:72
+msgid "Session id"
+msgstr ""
+
+#: admin/views/tracking/settings.php:77
+msgid "Include the MxChat session id in each event"
+msgstr ""
+
+#: admin/views/tracking/settings.php:81
+msgid ""
+"The session id is the join key into MxChat's transcripts table: with it, a "
+"click can be traced back to the conversation that produced it. It also means "
+"the id leaves the site — analytics vendors sit outside MxChat's own erasure "
+"path, so a deletion handled by MxChat does not reach them. Turning this off "
+"is the conservative choice; the events still work without it."
+msgstr ""
+
+#: admin/views/tracking/settings.php:90
+msgid "Matomo custom dimension"
+msgstr ""
+
+#: admin/views/tracking/settings.php:99
+msgid ""
+"The session id is also written to this Matomo custom dimension — give the id "
+"(1 to 999) of the dimension you created in Matomo. Leave it at 0 to send no "
+"custom dimension; it has no effect while the session id is not sent."
+msgstr ""
+
+#: admin/views/tracking/settings.php:107
+msgid "Debug"
+msgstr ""
+
+#: admin/views/tracking/settings.php:112
+msgid "Log every event to the browser console"
+msgstr ""
+
+#: admin/views/tracking/settings.php:116
+msgid ""
+"Each event is printed in the DevTools console, prefixed [MxChat Plus "
+"tracking]. It logs for every visitor, not only for administrators, so this "
+"is meant to be switched back off once you have checked that the events look "
+"right."
+msgstr ""
+
+#: admin/views/tracking/settings.php:129
+msgid "Clicked links"
+msgstr ""
+
+#: admin/views/tracking/settings.php:135
+msgid ""
+"MxChat logs link clicks server-side into its own table, which it creates "
+"when the plugin is activated. That table does not exist on this site, so no "
+"click has ever been recorded and there is nothing to report. It appears the "
+"next time MxChat is activated."
+msgstr ""
+
+#: admin/views/tracking/settings.php:144
+msgid ""
+"This report counts what MxChat itself records server-side, which is a "
+"narrower population than the events sent above: MxChat only tracks absolute "
+"http(s) links inside answers — never relative links, and never suggested "
+"questions. The two figures measure different things and will not match, by "
+"construction."
+msgstr ""
+
+#: admin/views/tracking/settings.php:151
+msgid "No click has been recorded yet."
+msgstr ""
+
+#. translators: 1: number of clicks, 2: number of distinct links, 3: number of distinct sessions
+#: admin/views/tracking/settings.php:159
+#, php-format
+msgid "%1$s clicks recorded, on %2$s links, across %3$s sessions."
+msgstr ""
+
+#. translators: %s: number of links listed in the table
+#: admin/views/tracking/settings.php:170
+#, php-format
+msgid "Only the %s most clicked links are listed here."
+msgstr ""
+
+#: admin/views/tracking/settings.php:184
+msgid "Last click"
+msgstr ""
+
+#: admin/views/tracking/settings.php:236
+msgid "Downloads the clicks MxChat has logged as a CSV file."
+msgstr ""
+
+#: includes/core/class-mxchat-plus-modules.php:87
+msgid "Link and suggestion click tracking"
+msgstr ""
