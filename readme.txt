@@ -276,7 +276,7 @@ The per-module history before the merge is preserved in `CHANGELOG.md`.
 == Upgrade Notice ==
 
 = 1.1.0 =
-With the DuckDB module on, the first request after the update rebuilds the vector table (schema v4). Take a backup first. Vectors a Multi-Bot bot already lost to another bot under 1.0.x must be re-imported.
+The DuckDB / MotherDuck module is now off by default, and this update switches it off once: if you use it, turn it back on under MxChat Plus > Modules. With the DuckDB module on, the first request after the update rebuilds the vector table (schema v4). Take a backup first. Vectors a Multi-Bot bot already lost to another bot under 1.0.x must be re-imported.
 
 = 1.0.0 =
 Replaces the separate mxchat-duckdb and mxchat-promptcache plugins. Deactivate and delete

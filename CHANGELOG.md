@@ -25,6 +25,9 @@ packages behind a stand-in for the `duckdb` CLI) driven through the plugin's CLI
 
 ### Upgrade notes
 
+- **DuckDB is switched off by this update** on installs that had it on (it is now off by
+  default). If MxChat answered from DuckDB, turn the module back on under
+  **MxChat Plus → Modules** before anything else.
 - **DuckDB schema v4 runs by itself.** On first use after the update, the vector table is
   rebuilt so that it is keyed on `(bot_id, vector_id)` (see *Fixed*). The rebuild copies the
   rows to `<table>_v4_staging`, recreates the table and its indexes, copies them back and
@@ -218,6 +221,11 @@ packages behind a stand-in for the `duckdb` CLI) driven through the plugin's CLI
   click-tracking rationale is rewritten: since 3.2.24 MxChat cancels no link click, so a
   `preventDefault()` of ours would strand every link. `tools/patches/` is documented as not
   applying to 3.2.21 or later (2 of 2 hunks fail on 3.2.25).
+
+- **The DuckDB / MotherDuck module is off by default**, and the update to 1.1.0 switches it
+  off once on installs that had it on, with an admin notice there: MxChat then answers from
+  its own knowledge store (WordPress database or Pinecone) again. If you use DuckDB, turn the
+  module back on under **MxChat Plus → Modules**; it stays on after that.
 
 ### Fixed
 

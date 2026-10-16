@@ -36,6 +36,8 @@ function mxchat_plus_uninstall_cleanup_site(bool $delete_data): void {
         mxchat_plus_tracking_uninstall_cleanup_site();
     }
     delete_option('mxchat_plus_modules');
+    delete_option('mxchat_plus_modules_duckdb_off_110');
+    delete_option('mxchat_plus_modules_duckdb_off_notice');
 }
 
 // Read the opt-in flag before anything is deleted — it lives in an option the

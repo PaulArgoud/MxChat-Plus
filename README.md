@@ -194,7 +194,7 @@ See [`CHANGELOG.md`](CHANGELOG.md) for everything else in 1.1.0.
 
 ## Quick start
 
-**DuckDB module**
+**DuckDB module** (off by default since 1.1.0 — turn it on in **MxChat Plus → Modules** first)
 
 1. **MxChat → DuckDB / MotherDuck** in the admin.
 2. Pick a backend — *MotherDuck* (token + database name) or *Embedded* (leave the path

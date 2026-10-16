@@ -32,10 +32,14 @@ DuckDB classes.
 | `transcripts` | CSV export of the selected conversations, of a date range, or of the conversation open in the details drawer | `admin_enqueue_scripts` + an AJAX action of our own |
 | `tracking` | Matomo / GA4 events for link and suggestion clicks (and, opt-in, chat opened), plus a report over the host's own click table | `wp_enqueue_scripts` (or `wp_footer` under MxChat's smart asset loading) + a capture-phase DOM listener |
 
-`tracking` is the only module that **defaults to off**, and the only one that
-puts code on a public page. Both follow from the same fact: it is the one feature
-that sends data to a third party, which is a decision for the site owner rather
-than a default.
+Two modules **default to off**. `tracking` is the only one that puts code on a
+public page, and both follow from the same fact: it is the one feature that sends
+data to a third party, which is a decision for the site owner rather than a
+default. `duckdb` has been off by default since 1.1.0: replacing MxChat's vector
+store is a deliberate choice, and most sites only want prompt caching. The 1.1.0
+update switched it off once on existing installs (`MxChat_Plus_Modules::
+switch_off_duckdb_once()`, marker option `mxchat_plus_modules_duckdb_off_110`),
+with an admin notice where it had been on; an admin who turns it back on keeps it.
 
 ---
 

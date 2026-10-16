@@ -24,6 +24,9 @@
         <testsuite name="tracking">
             <directory>tests/unit/tracking</directory>
         </testsuite>
+        <testsuite name="core">
+            <directory>tests/unit/core</directory>
+        </testsuite>
     </testsuites>
     <source>
         <include>

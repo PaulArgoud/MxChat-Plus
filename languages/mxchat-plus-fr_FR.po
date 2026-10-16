@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: MxChat Plus 1.0.0\n"
 "Report-Msgid-Bugs-To: https://github.com/PaulArgoud/mxchat-plus/issues\n"
-"POT-Creation-Date: 2026-10-17 01:25+0200\n"
+"POT-Creation-Date: 2026-10-17 01:48+0200\n"
 "PO-Revision-Date: 2026-10-17 00:00+0200\n"
 "Last-Translator: Paul Argoud\n"
 "Language-Team: French\n"
@@ -720,19 +720,27 @@ msgstr "Vous n’avez pas l’autorisation d’effectuer cette action."
 msgid "The MxChat plugin must be installed and activated for MxChat Plus to do anything. MxChat Plus extends MxChat and never modifies it."
 msgstr "Le plugin MxChat doit être installé et activé pour que MxChat Plus puisse fonctionner. MxChat Plus étend MxChat et ne le modifie jamais."
 
-#: includes/core/class-mxchat-plus-modules.php:84
+#: includes/core/class-mxchat-plus-modules.php:112
+msgid "MxChat Plus 1.1.0 turned the DuckDB / MotherDuck vector store module off: it is no longer on by default. MxChat now answers from its own knowledge store again. If you used DuckDB, turn the module back on."
+msgstr "MxChat Plus 1.1.0 a désactivé le module de base vectorielle DuckDB / MotherDuck : il n'est plus activé par défaut. MxChat répond de nouveau depuis sa propre base de connaissances. Si vous utilisiez DuckDB, réactivez le module."
+
+#: includes/core/class-mxchat-plus-modules.php:114
+msgid "Open the Modules screen"
+msgstr "Ouvrir l'écran Modules"
+
+#: includes/core/class-mxchat-plus-modules.php:127
 msgid "DuckDB / MotherDuck vector store"
 msgstr "Vector store DuckDB / MotherDuck"
 
-#: includes/core/class-mxchat-plus-modules.php:85
+#: includes/core/class-mxchat-plus-modules.php:128
 msgid "Anthropic prompt cache"
 msgstr "Cache de prompts Anthropic"
 
-#: includes/core/class-mxchat-plus-modules.php:86
+#: includes/core/class-mxchat-plus-modules.php:129
 msgid "CSV export of selected transcripts"
 msgstr "Export CSV des conversations sélectionnées"
 
-#: includes/core/class-mxchat-plus-modules.php:87
+#: includes/core/class-mxchat-plus-modules.php:130
 msgid "Link and suggestion click tracking"
 msgstr "Tracking des clics sur les liens et les suggestions"
 

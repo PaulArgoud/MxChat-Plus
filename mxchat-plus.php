@@ -86,6 +86,9 @@ class MxChat_Plus_Plugin {
             return;
         }
 
+        // Before the module list is read, so DuckDB is already off on the
+        // first request after the update to 1.1.0.
+        MxChat_Plus_Modules::switch_off_duckdb_once();
         $modules = MxChat_Plus_Modules::all();
 
         if (!empty($modules[MxChat_Plus_Modules::DUCKDB])) {
@@ -109,6 +112,7 @@ class MxChat_Plus_Plugin {
 
         if (is_admin()) {
             MxChat_Plus_Admin::instance()->register_hooks();
+            add_action('admin_notices', ['MxChat_Plus_Modules', 'render_duckdb_off_notice']);
         }
 
         if (defined('WP_CLI') && WP_CLI) {
