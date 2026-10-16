@@ -2,8 +2,8 @@
 /**
  * Options storage for the Tracking module.
  *
- * One WP option (mxchat_plus_tracking_options) holding the five settings the
- * front-end click tracker needs. Every read materialises all five keys: the
+ * One WP option (mxchat_plus_tracking_options) holding the six settings the
+ * front-end tracker needs. Every read materialises all six keys: the
  * localized script object is built from this array on every front-end request,
  * and a key missing there becomes an `undefined` in the browser — a failure
  * mode with no PHP-side trace at all.
@@ -32,7 +32,7 @@ class MxChat_Plus_Tracking_Options {
     const MATOMO_DIMENSION_MAX = 999;
 
     /**
-     * @return array{track_matomo:bool,track_ga4:bool,send_session_id:bool,matomo_dimension_id:int,debug:bool}
+     * @return array{track_matomo:bool,track_ga4:bool,send_session_id:bool,matomo_dimension_id:int,debug:bool,track_chat_open:bool}
      */
     public static function defaults(): array {
         return [
@@ -46,6 +46,11 @@ class MxChat_Plus_Tracking_Options {
             'send_session_id'     => true,
             'matomo_dimension_id' => 0,
             'debug'               => false,
+            // Off by default: a "chat opened" event is a new action in the
+            // site's existing Matomo reports, and one more interaction per
+            // visit — which moves the bounce rate. That is the site owner's
+            // call, not an upgrade side effect.
+            'track_chat_open'     => false,
         ];
     }
 
@@ -58,7 +63,7 @@ class MxChat_Plus_Tracking_Options {
      * Keys we do not declare are dropped — the array is rebuilt from our shape,
      * not filtered.
      *
-     * @return array{track_matomo:bool,track_ga4:bool,send_session_id:bool,matomo_dimension_id:int,debug:bool}
+     * @return array{track_matomo:bool,track_ga4:bool,send_session_id:bool,matomo_dimension_id:int,debug:bool,track_chat_open:bool}
      */
     public static function get(): array {
         $stored = get_option(MXCHAT_PLUS_TRACKING_OPTION_KEY, []);
@@ -73,19 +78,20 @@ class MxChat_Plus_Tracking_Options {
             'send_session_id'     => (bool) $merged['send_session_id'],
             'matomo_dimension_id' => self::clamp_dimension_id($merged['matomo_dimension_id']),
             'debug'               => (bool) $merged['debug'],
+            'track_chat_open'     => (bool) $merged['track_chat_open'],
         ];
     }
 
     /**
      * register_setting() callback for the 'mxchat_plus_tracking' group.
      *
-     * Always returns all five keys. An unchecked checkbox is simply absent from
+     * Always returns all six keys. An unchecked checkbox is simply absent from
      * $_POST, so returning only what was posted would leave the row without
      * that key — and get() would then hand back the *default*, which is `true`
      * for track_matomo and send_session_id. Unticking either would look like it
      * had done nothing.
      *
-     * @return array{track_matomo:bool,track_ga4:bool,send_session_id:bool,matomo_dimension_id:int,debug:bool}
+     * @return array{track_matomo:bool,track_ga4:bool,send_session_id:bool,matomo_dimension_id:int,debug:bool,track_chat_open:bool}
      */
     public static function sanitize(mixed $input): array {
         if (!is_array($input)) {
@@ -122,7 +128,56 @@ class MxChat_Plus_Tracking_Options {
             'send_session_id'     => !empty($input['send_session_id']),
             'matomo_dimension_id' => $dimension,
             'debug'               => !empty($input['debug']),
+            'track_chat_open'     => !empty($input['track_chat_open']),
         ];
+    }
+
+    /**
+     * mxchat_cache_purge_watched_options callback (a host filter): adds the
+     * options whose values are printed into every public page — our tracking
+     * settings, localized inline as `mxchatPlusTracking`, and the module
+     * switches, which decide whether the tracker's <script> tag is there at
+     * all — to the ones MxChat already purges full-page caches for.
+     *
+     * Without it, a site behind WP Rocket or LiteSpeed that turns the session
+     * id off, or switches the module off, keeps serving cached pages that
+     * still send the id, or still load the tracker, until the cache expires. Reusing the host's purge rather than calling
+     * each cache plugin ourselves keeps its 30-second debounce and its
+     * 3.2.25 owner switch (MxChat_Cache_Purge::is_enabled()): a site owner who
+     * turned page-cache clearing off in MxChat is not overruled by us.
+     *
+     * Side effect, accepted: the module switches also change when DuckDB,
+     * prompt caching or transcripts are toggled, so those saves purge too.
+     * They are rare admin saves, debounced by the host.
+     *
+     * Registered at FILE SCOPE in mxchat-plus.php, not in boot(): the host
+     * applies this filter once, in MxChat_Cache_Purge's constructor, which
+     * runs from mxchat_init() on plugins_loaded at priority 10 (MxChat
+     * 3.2.25). boot() runs at priority 20, after the list is already fixed.
+     *
+     * @param mixed $options The host's list, normally
+     *                       ['mxchat_options', 'mxchat_theme_options', 'mxchat_prompts_options'].
+     * @return mixed The same list with our two options appended, or the input
+     *               untouched when it is not an array.
+     */
+    public static function add_host_cache_purge_watch(mixed $options): mixed {
+        // A non-array means another filter broke the list. The host then
+        // falls back to its own defaults; turning it into an array of ours
+        // would stop MxChat purging for its own settings, so it is passed on
+        // exactly as it came. Entries of other plugins are not ours to clean.
+        if (!is_array($options)) {
+            return $options;
+        }
+
+        // The constants, not string copies: a later rename of either option
+        // cannot leave this list watching a name nothing writes.
+        foreach ([MXCHAT_PLUS_TRACKING_OPTION_KEY, MxChat_Plus_Modules::OPTION] as $ours) {
+            if (!in_array($ours, $options, true)) {
+                $options[] = $ours;
+            }
+        }
+
+        return $options;
     }
 
     /**

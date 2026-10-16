@@ -28,6 +28,10 @@ final class PostReprocessorTest extends TestCase {
         $GLOBALS['__test_wp_query_matcher'] = null;
         MxChat_Utils::$submit_calls = [];
         MxChat_Utils::$submit_returns = true;
+        $GLOBALS['__test_filter_overrides'] = [];
+        $GLOBALS['__test_actions'] = [];
+        MxChat_Knowledge_Manager::reset();
+        MxChat_Plus_DuckDB_Post_Reprocessor::reset_host_signature_cache();
 
         // mxchat_options is read by resolve_embedding_api_key() to pick the
         // right provider's API key. Default to OpenAI for these tests.
@@ -67,11 +71,17 @@ final class PostReprocessorTest extends TestCase {
         );
     }
 
+    protected function tearDown(): void {
+        $GLOBALS['__test_filter_overrides'] = [];
+        MxChat_Knowledge_Manager::reset();
+    }
+
     public function test_reprocess_throws_when_no_embedding_api_key_configured(): void {
         update_option('mxchat_options', ['embedding_model' => 'text-embedding-3-small']);
 
+        // The refusal is MxChat's own: MxChat_Utils::embedding_preflight().
         $this->expectException(RuntimeException::class);
-        $this->expectExceptionMessageMatches('/embedding API key/i');
+        $this->expectExceptionMessageMatches('/API key is not configured/i');
         $this->reprocessor->reprocess_posts(['post'], 10, 0, 'default');
     }
 
@@ -79,8 +89,152 @@ final class PostReprocessorTest extends TestCase {
         update_option('mxchat_options', []);
 
         $this->expectException(RuntimeException::class);
-        $this->expectExceptionMessageMatches('/embedding API key/i');
+        $this->expectExceptionMessageMatches('/API key is not configured/i');
         $this->reprocessor->reprocess_single_post(42, 'default');
+    }
+
+    // ─── Embedding preflight (MxChat_Utils::embedding_preflight) ──────────
+
+    public function test_keyless_custom_provider_reprocesses_with_an_empty_key(): void {
+        // A site embedding through Ollama / LM Studio has no OpenAI key; MxChat
+        // routes generate_embedding() to the custom endpoint and ignores the key.
+        update_option('mxchat_options', [
+            'custom_provider_for_embeddings' => 'on',
+            'custom_provider_base_url'       => 'http://localhost:11434/v1',
+            'embedding_model'                => 'voyage-3-large', // stale dropdown value, no Voyage key
+        ]);
+        $this->seed_post(1, 'Title', 'Body');
+        $GLOBALS['__test_wp_query_matcher'] = fn() => ['posts' => [1], 'found_posts' => 1];
+
+        $r = $this->reprocessor->reprocess_posts(['post'], 10, 0, 'default');
+
+        $this->assertSame(1, $r['processed']);
+        $this->assertSame('', MxChat_Utils::$submit_calls[0]['api_key']);
+    }
+
+    public function test_custom_provider_without_base_url_is_refused_up_front(): void {
+        update_option('mxchat_options', ['custom_provider_for_embeddings' => 'on', 'api_key' => 'sk-present']);
+        $this->seed_post(1, 'Title', 'Body');
+        $GLOBALS['__test_wp_query_matcher'] = fn() => ['posts' => [1], 'found_posts' => 1];
+
+        try {
+            $this->reprocessor->reprocess_posts(['post'], 10, 0, 'default');
+            $this->fail('expected the preflight to refuse');
+        } catch (RuntimeException $e) {
+            $this->assertStringContainsString('Base URL', $e->getMessage());
+        }
+        $this->assertSame([], MxChat_Utils::$submit_calls, 'refused once, before any post');
+    }
+
+    public function test_fallback_for_hosts_without_preflight_is_custom_aware(): void {
+        $fallback = new ReflectionMethod(MxChat_Plus_DuckDB_Post_Reprocessor::class, 'fallback_embedding_api_key');
+
+        $this->assertSame('', $fallback->invoke(null, ['custom_provider_for_embeddings' => 'on', 'custom_provider_base_url' => 'http://x/v1']));
+        $this->assertSame('vk', $fallback->invoke(null, ['embedding_model' => 'voyage-3-large', 'voyage_api_key' => 'vk']));
+        $this->assertSame('sk', $fallback->invoke(null, ['api_key' => 'sk']));
+
+        foreach ([['custom_provider_for_embeddings' => 'on'], ['embedding_model' => 'gemini-embedding-001']] as $opts) {
+            try {
+                $fallback->invoke(null, $opts);
+                $this->fail('expected a refusal');
+            } catch (RuntimeException $e) {
+                $this->assertNotSame('', $e->getMessage());
+            }
+        }
+    }
+
+    public function test_default_bot_reads_the_site_options_not_the_bot_filter(): void {
+        // MxChat_Utils::generate_embedding() reads get_option('mxchat_options')
+        // for 'default'; the preflight must be fed the same options.
+        $GLOBALS['__test_filter_overrides']['mxchat_get_bot_options'] = ['embedding_model' => 'gemini-embedding-001'];
+        $this->assertSame('sk-test-key', MxChat_Plus_DuckDB_Post_Reprocessor::embedding_api_key('default'));
+    }
+
+    // ─── Content assembly (MxChat's own assembler, else a safe fallback) ──
+
+    public function test_hosts_assembler_builds_the_content_with_its_bulk_arguments(): void {
+        MxChat_Knowledge_Manager::$assembled = ['content' => "Mug\n\nPrice: 12 EUR\nSKU: M-1", 'acf_fields_found' => 0, 'pdf_extracted_count' => 0];
+        update_option('mxchat_acf_pdf_extraction', '1');
+        $this->seed_post(3, 'Mug', 'raw body', 'product');
+        $GLOBALS['__test_wp_query_matcher'] = fn() => ['posts' => [3], 'found_posts' => 1];
+
+        $this->reprocessor->reprocess_posts(['product'], 10, 0, 'default');
+
+        $this->assertSame("Mug\n\nPrice: 12 EUR\nSKU: M-1", MxChat_Utils::$submit_calls[0]['content']);
+        $call = MxChat_Knowledge_Manager::$assembler_calls[0];
+        $this->assertSame(3, $call['post_id']);
+        $this->assertSame(['read_display' => false, 'extract_acf_pdfs' => true, 'include_product_tabs' => true], $call['args']);
+    }
+
+    public function test_fallback_builder_never_renders_the_content(): void {
+        // Assembler returns a non-array (shim default) → our own builder.
+        $GLOBALS['__test_filter_overrides']['the_content'] = 'RENDERED BY THE THEME';
+        $GLOBALS['__test_posts'][8] = new WP_Post([
+            'ID' => 8, 'post_title' => 'Caf&eacute; guide', 'post_type' => 'page', 'post_status' => 'publish',
+            'post_content' => '<p>Open [highlight color="red"]daily[/highlight] from 8.</p>',
+            'post_excerpt' => 'Short [b]summary[/b]',
+        ]);
+        $GLOBALS['__test_permalinks'][8] = 'https://example.com/cafe/';
+
+        $this->reprocessor->reprocess_single_post(8, 'default');
+
+        $content = MxChat_Utils::$submit_calls[0]['content'];
+        $this->assertStringNotContainsString('RENDERED', $content, 'the_content would run every shortcode and theme filter');
+        $this->assertStringStartsWith("Café guide\n\n", $content);
+        $this->assertStringContainsString('Short Description: Short summary', $content);
+        $this->assertStringContainsString('Open daily from 8.', $content, 'shortcode brackets go, their text stays');
+    }
+
+    public function test_post_content_filter_still_has_the_last_word(): void {
+        MxChat_Knowledge_Manager::$assembled = ['content' => 'host text'];
+        $GLOBALS['__test_filter_overrides']['mxchat_plus_duckdb_post_content'] = 'integrator text';
+        $this->seed_post(4, 't', 'b');
+        $this->reprocessor->reprocess_single_post(4, 'default');
+        $this->assertSame('integrator text', MxChat_Utils::$submit_calls[0]['content']);
+    }
+
+    public function test_hosts_before_process_post_filter_is_applied(): void {
+        $this->seed_post(5, 'Original', 'Body');
+        $GLOBALS['__test_filter_overrides']['mxchat_before_process_post'] = new WP_Post([
+            'ID' => 5, 'post_title' => 'Rewritten by an add-on', 'post_content' => 'Body', 'post_type' => 'post',
+        ]);
+        $this->reprocessor->reprocess_single_post(5, 'default');
+        $this->assertStringStartsWith('Rewritten by an add-on', MxChat_Utils::$submit_calls[0]['content']);
+    }
+
+    // ─── Title and role restriction, as MxChat's bulk import ──────────────
+
+    public function test_title_is_passed_to_hosts_that_take_it(): void {
+        $this->seed_post(6, 'Pricing', 'Body');
+        $this->reprocessor->reprocess_single_post(6, 'default');
+        $this->assertSame('Pricing', MxChat_Utils::$submit_calls[0]['title']);
+    }
+
+    public function test_role_restriction_is_reapplied_after_storage(): void {
+        $this->seed_post(7, 'Members', 'Body', 'post', 'https://example.com/members/');
+        $this->reprocessor->reprocess_single_post(7, 'default');
+
+        $this->assertSame([['post_id' => 7, 'source_url' => 'https://example.com/members/']], MxChat_Knowledge_Manager::$role_calls);
+        $this->assertSame([], $GLOBALS['__test_actions'], 'the weaker action fallback is not needed');
+    }
+
+    public function test_role_is_not_reapplied_when_storage_failed(): void {
+        $this->seed_post(7, 'Members', 'Body');
+        MxChat_Utils::$submit_returns = new WP_Error('e', 'quota');
+        try {
+            $this->reprocessor->reprocess_single_post(7, 'default');
+        } catch (RuntimeException $e) {
+            // expected
+        }
+        $this->assertSame([], MxChat_Knowledge_Manager::$role_calls);
+    }
+
+    public function test_skipped_posts_do_not_overwrite_last_error(): void {
+        update_option('mxchat_plus_duckdb_options', array_merge(MxChat_Plus_DuckDB_Options::defaults(), ['embedding_dim' => 3, 'last_error' => 'previous']));
+        $GLOBALS['__test_wp_query_matcher'] = fn() => ['posts' => [404], 'found_posts' => 1];
+        $r = $this->reprocessor->reprocess_posts(['post'], 10, 0, 'default');
+        $this->assertSame(1, $r['failed']);
+        $this->assertSame('previous', get_option('mxchat_plus_duckdb_options')['last_error']);
     }
 
     // ─── reprocess_posts (batched) ───────────────────────────────────────
@@ -115,8 +269,9 @@ final class PostReprocessorTest extends TestCase {
         $this->assertCount(1, MxChat_Utils::$submit_calls);
         $call = MxChat_Utils::$submit_calls[0];
 
-        // Production format: title + "\n\n" + post_content (after the_content
-        // filter and wp_strip_all_tags). Title first, then content.
+        // Production format (fallback builder — the shim's assembler returns
+        // nothing): title + "\n\n" + post_content with tags stripped. Title
+        // first, then content.
         $this->assertStringStartsWith('Quick brown fox', $call['content']);
         $this->assertStringContainsString('Lorem ipsum', $call['content']);
     }

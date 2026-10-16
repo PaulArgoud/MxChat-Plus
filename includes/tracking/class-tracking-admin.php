@@ -63,17 +63,18 @@ class MxChat_Plus_Tracking_Admin {
 
         $opts = MxChat_Plus_Tracking_Options::get();
 
-        // MxChat creates wp_mxchat_url_clicks in its activation routine only,
-        // so it is absent on any install activated before that routine existed
-        // — and on any install where the plugin was updated in place rather
-        // than reactivated. Every reader inside the host guards with a SHOW
+        // MxChat creates wp_mxchat_url_clicks from mxchat_activate(), which runs
+        // on activation and again on the first request after every MxChat
+        // update (mxchat_check_for_update(), MxChat 3.2.25). So a missing table
+        // means dbDelta failed, or the table was dropped since. Every reader
+        // inside the host guards with a SHOW
         // TABLES LIKE for that reason; the report does the same and the view
         // explains the absence instead of surfacing a database error.
         $table_exists = MxChat_Plus_Tracking_Report::table_exists();
         $rows         = $table_exists ? MxChat_Plus_Tracking_Report::top_links(self::REPORT_LIMIT) : [];
-        $totals       = $table_exists
-            ? MxChat_Plus_Tracking_Report::totals()
-            : ['clicks' => 0, 'links' => 0, 'sessions' => 0];
+        // Zero-filled, with no query, when the table is absent (the probe
+        // above is memoised).
+        $totals       = MxChat_Plus_Tracking_Report::totals();
 
         $export_url   = admin_url('admin-ajax.php');
         $export_nonce = wp_create_nonce(self::EXPORT_ACTION);

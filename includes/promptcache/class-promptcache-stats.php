@@ -31,15 +31,24 @@ class MxChat_Plus_PromptCache_Stats {
      *
      * Distinct de MxChat_Plus_PromptCache::is_anthropic_messages_url() (qui gate
      * l'INJECTION, réservée à Anthropic). Ici on reconnaît aussi les endpoints
-     * OpenAI-compatibles (OpenAI / OpenRouter / xAI / DeepSeek) et Gemini, dont le
-     * cache est AUTOMATIQUE côté provider : on n'injecte rien, mais on lit les
-     * tokens cachés retournés pour offrir un tableau de bord d'économies unifié.
+     * OpenAI-compatibles (OpenAI / OpenRouter / xAI / DeepSeek, compatibilité
+     * OpenAI de Gemini, fournisseur personnalisé de MxChat), la Responses API
+     * d'OpenAI et Gemini natif, dont le cache est AUTOMATIQUE côté provider : on
+     * n'injecte rien, mais on lit les tokens cachés retournés pour offrir un
+     * tableau de bord d'économies unifié.
      *
      * Note : ces réponses ne sont vues que pour les appels NON-STREAMÉS
      * (wp_remote_post). Le streaming MXChat passe par cURL direct → ni intercepté
      * ni mesuré ici.
      *
-     * @return array{provider:string, style:string, model?:string}|null
+     * `strict_usage` : l'échantillon n'est enregistré que si la réponse publie
+     * explicitement ses tokens cachés. Posé sur les endpoints dont on ignore
+     * s'ils le font (compatibilité OpenAI de Gemini, fournisseur personnalisé :
+     * Ollama, LM Studio, vLLM… n'en renvoient en général aucun) — sans quoi
+     * chaque requête y passerait pour un 0 % de hit au lieu d'une absence de
+     * mesure.
+     *
+     * @return array{provider:string, style:string, model?:string, strict_usage?:bool}|null
      */
     public static function identify_endpoint(mixed $url): ?array {
         if (!is_string($url)) {
@@ -61,6 +70,13 @@ class MxChat_Plus_PromptCache_Stats {
             case 'api.openai.com':
                 if ($path === '/v1/chat/completions') {
                     return ['provider' => 'openai', 'style' => 'openai'];
+                }
+                // Responses API : réponse web search non streamée de MxChat
+                // (mxchat_web_search_non_streaming_response) et récupération
+                // Vector Store (find_relevant_content_openai_vectorstore,
+                // file_search), MxChat 3.2.21 → 3.2.25. Cf. request_label().
+                if ($path === '/v1/responses') {
+                    return ['provider' => 'openai', 'style' => 'openai_responses'];
                 }
                 break;
             case 'openrouter.ai':
@@ -88,9 +104,95 @@ class MxChat_Plus_PromptCache_Stats {
                     }
                     return ['provider' => 'gemini', 'style' => 'gemini', 'model' => $model];
                 }
+                // Endpoint OpenAI-compatible de Google, atteint par le
+                // « fournisseur personnalisé » de MxChat (base .../v1beta/openai).
+                // Que Google y publie prompt_tokens_details.cached_tokens n'est
+                // pas vérifiable ici : mesure stricte.
+                if (str_ends_with(rtrim($path, '/'), '/openai/chat/completions')) {
+                    return ['provider' => 'gemini', 'style' => 'openai', 'strict_usage' => true];
+                }
                 break;
         }
+
+        if (self::is_custom_provider_url($parsed)) {
+            return ['provider' => 'custom', 'style' => 'openai', 'strict_usage' => true];
+        }
         return null;
+    }
+
+    /**
+     * L'URL est-elle celle du « fournisseur personnalisé » (OpenAI-compatible)
+     * configuré dans MxChat ?
+     *
+     * Lit, sans jamais l'écrire, la clé `custom_provider_base_url` de l'option
+     * `mxchat_options` — deux littéraux de l'HÔTE, à ne pas renommer. MxChat
+     * bâtit l'URL de deux façons (MxChat 3.2.25) :
+     *   - mxchat_resolve_custom_provider() (chat) : base + '/chat/completions',
+     *     plus `?api-version=` pour Azure ;
+     *   - mxchat_fc_resolve_provider() (AI Tools) : la base telle quelle si elle
+     *     contient déjà 'chat/completions', sinon base + '/chat/completions'.
+     * On compare donc schéma + hôte + port + chemin (la requête est ignorée),
+     * et on accepte les deux formes.
+     *
+     * Limite : seule la configuration globale est lue ; un bot Multi-Bot qui
+     * pointe ailleurs n'est pas reconnu.
+     *
+     * @param array<mixed> $parsed Résultat de wp_parse_url() sur l'URL appelée.
+     */
+    public static function is_custom_provider_url(array $parsed): bool {
+        $options = get_option('mxchat_options', []);
+        if (!is_array($options) || !isset($options['custom_provider_base_url']) || !is_string($options['custom_provider_base_url'])) {
+            return false;
+        }
+        $base = rtrim(trim($options['custom_provider_base_url']), '/');
+        if ($base === '') {
+            return false;
+        }
+        $base_parsed = wp_parse_url($base);
+        if (!is_array($base_parsed) || empty($base_parsed['host'])) {
+            return false;
+        }
+
+        $same_origin = strtolower((string) ($parsed['scheme'] ?? '')) === strtolower((string) ($base_parsed['scheme'] ?? ''))
+            && strtolower((string) ($parsed['host'] ?? '')) === strtolower((string) $base_parsed['host'])
+            && (int) ($parsed['port'] ?? 0) === (int) ($base_parsed['port'] ?? 0);
+        if (!$same_origin) {
+            return false;
+        }
+
+        $path      = rtrim((string) ($parsed['path'] ?? ''), '/');
+        $base_path = rtrim((string) ($base_parsed['path'] ?? ''), '/');
+        return $path === $base_path . '/chat/completions'
+            || (str_contains($base_path, 'chat/completions') && $path === $base_path);
+    }
+
+    /**
+     * Suffixe ajouté au nom de modèle pour distinguer un appel particulier dans
+     * la ventilation par modèle ; '' sinon.
+     *
+     * La récupération Vector Store de MxChat passe par la Responses API, comme
+     * la réponse web search : même URL, mais c'est une recherche (outil
+     * file_search, pas de clé `instructions`), envoyée en plus de la réponse à
+     * chaque message. Elle reste comptée — c'est une dépense réelle — sous un
+     * libellé à part, pour qu'on ne la confonde pas avec la réponse elle-même.
+     *
+     * @param array<mixed> $endpoint Résultat d'identify_endpoint().
+     * @param mixed        $args     Arguments de la requête (body JSON).
+     */
+    public static function request_label(array $endpoint, mixed $args): string {
+        if (($endpoint['style'] ?? '') !== 'openai_responses' || !is_array($args) || !isset($args['body']) || !is_string($args['body'])) {
+            return '';
+        }
+        $body = json_decode($args['body'], true);
+        if (!is_array($body) || array_key_exists('instructions', $body) || !isset($body['tools']) || !is_array($body['tools'])) {
+            return '';
+        }
+        foreach ($body['tools'] as $tool) {
+            if (is_array($tool) && ($tool['type'] ?? null) === 'file_search') {
+                return ' (file_search)';
+            }
+        }
+        return '';
     }
 
     /**
@@ -100,7 +202,13 @@ class MxChat_Plus_PromptCache_Stats {
      * - anthropic         : usage.{input_tokens, cache_creation_input_tokens, cache_read_input_tokens}
      * - openai-compatible : usage.prompt_tokens + usage.prompt_tokens_details.cached_tokens
      *                       (cache automatique → pas d'écriture explicite, cache_creation = 0)
+     * - openai_responses  : usage.input_tokens + usage.input_tokens_details.cached_tokens
+     *                       (sémantique de l'API OpenAI, absente du code de l'hôte :
+     *                       à vérifier sur une vraie réponse)
      * - gemini            : usageMetadata.{promptTokenCount, cachedContentTokenCount}
+     *
+     * Avec `strict_usage`, une réponse qui ne publie pas ses tokens cachés n'est
+     * pas un échantillon (null), cf. identify_endpoint().
      *
      * @return array{model:string, input:int, cache_creation:int, cache_read:int}|null
      */
@@ -123,15 +231,37 @@ class MxChat_Plus_PromptCache_Stats {
             ];
         }
 
-        if ($style === 'openai') {
+        $strict = !empty($endpoint['strict_usage']);
+
+        if ($style === 'openai_responses') {
             if (!isset($data['usage']) || !is_array($data['usage'])) {
                 return null;
             }
             $u      = $data['usage'];
-            $prompt = (int) ($u['prompt_tokens'] ?? 0);
-            $cached = isset($u['prompt_tokens_details']['cached_tokens'])
-                ? (int) $u['prompt_tokens_details']['cached_tokens']
+            $prompt = (int) ($u['input_tokens'] ?? 0);
+            $cached = isset($u['input_tokens_details']) && is_array($u['input_tokens_details']) && isset($u['input_tokens_details']['cached_tokens'])
+                ? (int) $u['input_tokens_details']['cached_tokens']
                 : 0;
+            return [
+                'model'          => (isset($data['model']) && is_string($data['model'])) ? $data['model'] : 'unknown',
+                'input'          => max(0, $prompt - $cached),
+                'cache_creation' => 0,
+                'cache_read'     => $cached,
+            ];
+        }
+
+        if ($style === 'openai') {
+            if (!isset($data['usage']) || !is_array($data['usage'])) {
+                return null;
+            }
+            $u        = $data['usage'];
+            $prompt   = (int) ($u['prompt_tokens'] ?? 0);
+            $reported = isset($u['prompt_tokens_details']) && is_array($u['prompt_tokens_details'])
+                && isset($u['prompt_tokens_details']['cached_tokens']);
+            if ($strict && !$reported) {
+                return null;
+            }
+            $cached = $reported ? (int) $u['prompt_tokens_details']['cached_tokens'] : 0;
             return [
                 'model'          => (isset($data['model']) && is_string($data['model'])) ? $data['model'] : 'unknown',
                 'input'          => max(0, $prompt - $cached), // reste non-caché, sémantique alignée sur Anthropic

@@ -31,6 +31,8 @@ final class AsyncReprocessTest extends TestCase {
         $GLOBALS['__test_posts']           = [];
         MxChat_Utils::$submit_calls = [];
         MxChat_Utils::$submit_returns = true;
+        // enqueue_batch() runs MxChat's embedding preflight up front.
+        update_option('mxchat_options', ['api_key' => 'sk-test', 'embedding_model' => 'text-embedding-3-small']);
 
         $this->async = MxChat_Plus_DuckDB_Async_Reprocess::instance();
     }
@@ -96,6 +98,42 @@ final class AsyncReprocessTest extends TestCase {
         );
         sort($queued_post_ids);
         $this->assertSame([101, 102, 103], $queued_post_ids);
+    }
+
+    public function test_enqueue_batch_refuses_the_whole_batch_when_mxchat_cannot_embed(): void {
+        // No key for the selected OpenAI model: MxChat's preflight says no,
+        // and not a single job may reach the queue.
+        update_option('mxchat_options', ['embedding_model' => 'text-embedding-3-small']);
+        $GLOBALS['__test_wp_query_matcher'] = function () {
+            return ['posts' => [101, 102, 103]];
+        };
+
+        try {
+            $this->async->enqueue_batch(['post'], 'default');
+            $this->fail('enqueue_batch() must throw when MxChat cannot embed');
+        } catch (RuntimeException $e) {
+            $this->assertStringContainsString('API key is not configured', $e->getMessage(),
+                "MxChat's own preflight reason is surfaced");
+        }
+        $this->assertSame([], $GLOBALS['__test_as_queue'], 'nothing is queued');
+        $this->assertFalse(get_option(MxChat_Plus_DuckDB_Async_Reprocess::STATE_OPTION, false),
+            'no batch state is written for a refused batch');
+    }
+
+    public function test_enqueue_batch_accepts_a_keyless_custom_provider(): void {
+        // A Custom Provider needs no key; the preflight passes and the
+        // batch is queued as usual.
+        update_option('mxchat_options', [
+            'custom_provider_for_embeddings' => 'on',
+            'custom_provider_base_url'       => 'https://llm.example.test/v1',
+        ]);
+        $GLOBALS['__test_wp_query_matcher'] = function () {
+            return ['posts' => [101, 102]];
+        };
+
+        $r = $this->async->enqueue_batch(['post'], 'default');
+
+        $this->assertSame(2, $r['scheduled']);
     }
 
     public function test_enqueue_batch_throws_when_action_scheduler_is_unavailable(): void {

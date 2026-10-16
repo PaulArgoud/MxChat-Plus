@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: MxChat Plus 1.0.0\n"
 "Report-Msgid-Bugs-To: https://github.com/PaulArgoud/mxchat-plus/issues\n"
-"POT-Creation-Date: 2026-09-11 22:42+0200\n"
+"POT-Creation-Date: 2026-10-17 01:25+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -16,56 +16,95 @@ msgstr ""
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"X-Domain: mxchat-plus\n"
 
-#: admin/views/duckdb/partials/section-activation.php:7
+#: admin/views/duckdb/partials/section-activation.php:12
 msgid "Activation"
 msgstr ""
 
-#: admin/views/duckdb/partials/section-activation.php:10
+#: admin/views/duckdb/partials/section-activation.php:15
 msgid "Enable DuckDB / MotherDuck"
 msgstr ""
 
-#: admin/views/duckdb/partials/section-activation.php:14
-#: includes/core/class-mxchat-plus-admin.php:137
+#: admin/views/duckdb/partials/section-activation.php:19
+#: includes/core/class-mxchat-plus-admin.php:143
 msgid "Enabled"
 msgstr ""
 
-#: admin/views/duckdb/partials/section-activation.php:18
+#: admin/views/duckdb/partials/section-activation.php:23
 msgid ""
-"When enabled, MxChat uses this plugin as its vector store (in place of "
-"Pinecone). When disabled, MxChat falls back to its default behaviour."
+"Turns the DuckDB / MotherDuck vector store on. MxChat uses it only for the "
+"bots routed below: the default bot with Default-bot routing, other bots with "
+"Multi-Bot routing. Every other bot keeps its own Pinecone or WordPress-"
+"database storage. When disabled, MxChat falls back to its default behaviour."
 msgstr ""
 
-#: admin/views/duckdb/partials/section-activation.php:25
+#: admin/views/duckdb/partials/section-activation.php:30
 msgid "Backend"
 msgstr ""
 
-#: admin/views/duckdb/partials/section-activation.php:29
+#: admin/views/duckdb/partials/section-activation.php:34
 msgid "MotherDuck (cloud, via ATTACH)"
 msgstr ""
 
-#: admin/views/duckdb/partials/section-activation.php:33
+#: admin/views/duckdb/partials/section-activation.php:38
 msgid "DuckDB embedded (local file)"
 msgstr ""
 
-#: admin/views/duckdb/partials/section-activation.php:38
+#: admin/views/duckdb/partials/section-activation.php:43
 msgid "Default-bot routing"
 msgstr ""
 
-#: admin/views/duckdb/partials/section-activation.php:44
+#: admin/views/duckdb/partials/section-activation.php:49
 msgid "Route default-bot Pinecone calls through this plugin (Option B reach)"
 msgstr ""
 
-#: admin/views/duckdb/partials/section-activation.php:48
+#: admin/views/duckdb/partials/section-activation.php:53
 msgid ""
-"MxChat reads its Pinecone settings straight from the database for the "
-"default bot when the Multi-Bot Manager isn't active, which bypasses the "
-"filter this plugin uses to advertise itself. Enable this to shortcircuit "
-"that read and route default-bot calls through the proxy too. Leave OFF if "
-"you're running real Pinecone alongside DuckDB on the default bot, or if "
-"you've applied the upstream patch (Option A) — the patch path doesn't need "
-"this setting."
+"MxChat reads the default bot's Pinecone settings straight from the database, "
+"so the filter this plugin uses for other bots never reaches it. Enable this "
+"to answer that read with the DuckDB proxy, so the default bot is served by "
+"DuckDB too. Your stored Pinecone settings are kept: switching this off gives "
+"them back to MxChat. Leave OFF if the default bot should keep real Pinecone "
+"or the WordPress database, or if you've applied the upstream patch (Option "
+"A) — the patch path doesn't need this setting."
+msgstr ""
+
+#: admin/views/duckdb/partials/section-activation.php:60
+msgid "Multi-Bot routing"
+msgstr ""
+
+#: admin/views/duckdb/partials/section-activation.php:66
+msgid "Route every Multi-Bot bot through this plugin"
+msgstr ""
+
+#: admin/views/duckdb/partials/section-activation.php:69
+msgid "Or only these bot IDs (comma-separated):"
+msgstr ""
+
+#: admin/views/duckdb/partials/section-activation.php:76
+msgid ""
+"For MxChat's Multi-Bot add-on. A routed bot reads and writes its own DuckDB "
+"namespace, named after its bot ID, instead of the storage the add-on gives "
+"it — so it no longer sees the knowledge MxChat keeps in the WordPress "
+"database, which all bots share. A bot on a Pinecone document index is never "
+"routed. Bots that are not routed keep their own settings."
+msgstr ""
+
+#: admin/views/duckdb/partials/section-activation.php:91
+msgid ""
+"This install predates the setting and still routes every bot, because DuckDB "
+"could not be read to find which bots have vectors there. As soon as it "
+"answers, only those bots stay routed. Saving this page without changing "
+"these fields leaves that upgrade pending; untick the box or list bot IDs to "
+"choose now."
+msgstr ""
+
+#: admin/views/duckdb/partials/section-activation.php:100
+msgid "Keep routing every bot (skip the automatic upgrade)"
+msgstr ""
+
+#: admin/views/duckdb/partials/section-activation.php:106
+msgid "The Multi-Bot add-on is not active, so this setting has no effect."
 msgstr ""
 
 #: admin/views/duckdb/partials/section-bot-overrides.php:24
@@ -153,62 +192,85 @@ msgstr ""
 msgid ""
 "walks WordPress posts/pages and re-runs the MxChat ingestion pipeline "
 "(chunking + embedding + upsert). Recommended for Pinecone-only installs. "
-"Calls the configured embedding API (OpenAI / Voyage / Gemini) — potential "
-"cost."
+"Calls the configured embedding API (OpenAI / Voyage / Gemini / Custom "
+"Provider) — potential cost."
 msgstr ""
 
-#: admin/views/duckdb/partials/section-diagnostics.php:34
+#: admin/views/duckdb/partials/section-diagnostics.php:31
+msgid ""
+"Media library files (PDF, Word…) are not posts and are not included: re-"
+"import them with MxChat → Knowledge → Import → Media."
+msgstr ""
+
+#: admin/views/duckdb/partials/section-diagnostics.php:38
 msgid "Post types to reprocess (comma-separated):"
 msgstr ""
 
-#: admin/views/duckdb/partials/section-diagnostics.php:48
+#: admin/views/duckdb/partials/section-diagnostics.php:52
 msgid "Vectors in DuckDB"
 msgstr ""
 
-#: admin/views/duckdb/partials/section-diagnostics.php:61
+#: admin/views/duckdb/partials/section-diagnostics.php:65
 msgid "Last sync"
 msgstr ""
 
-#: admin/views/duckdb/partials/section-diagnostics.php:67
+#. translators: 1: date/time, 2: vector count
+#: admin/views/duckdb/partials/section-diagnostics.php:71
 #, php-format
 msgid "%1$s (%2$d vectors)"
 msgstr ""
 
-#: admin/views/duckdb/partials/section-diagnostics.php:72
+#: admin/views/duckdb/partials/section-diagnostics.php:76
 msgid "Never"
 msgstr ""
 
-#: admin/views/duckdb/partials/section-diagnostics.php:78
+#: admin/views/duckdb/partials/section-diagnostics.php:82
 msgid "Active backend"
 msgstr ""
 
-#: admin/views/duckdb/partials/section-diagnostics.php:83
+#: admin/views/duckdb/partials/section-diagnostics.php:87
 msgid "Searches (rolling 1h)"
 msgstr ""
 
-#: admin/views/duckdb/partials/section-diagnostics.php:87
+#: admin/views/duckdb/partials/section-diagnostics.php:91
 msgid "Latency p50 / p95 / p99"
 msgstr ""
 
-#: admin/views/duckdb/partials/section-diagnostics.php:91
+#: admin/views/duckdb/partials/section-diagnostics.php:95
+#: includes/promptcache/class-promptcache-admin.php:104
 msgid "Cache hit rate"
 msgstr ""
 
-#: admin/views/duckdb/partials/section-diagnostics.php:97
+#: admin/views/duckdb/partials/section-diagnostics.php:101
 msgid "Pinecone proxy endpoint (Option B)"
 msgstr ""
 
-#: admin/views/duckdb/partials/section-diagnostics.php:100
+#: admin/views/duckdb/partials/section-diagnostics.php:105
 msgid ""
-"These values are auto-injected into MxChat via the "
-"mxchat_get_bot_pinecone_config filter. No action required."
+"Default-bot routing is on: MxChat reads these values for the default bot in "
+"place of its stored Pinecone settings (through "
+"pre_option_mxchat_pinecone_addon_options). No action required."
 msgstr ""
 
-#: admin/views/duckdb/partials/section-diagnostics.php:107
+#: admin/views/duckdb/partials/section-diagnostics.php:110
+msgid ""
+"Default-bot routing is off: the default bot still uses whatever is stored in "
+"MxChat's Pinecone settings (real Pinecone or the WordPress database), not "
+"these values. Turn on Default-bot routing under Activation to serve it from "
+"DuckDB."
+msgstr ""
+
+#: admin/views/duckdb/partials/section-diagnostics.php:115
+msgid ""
+"Multi-Bot bots opted in under Multi-Bot routing receive the same host, with "
+"a token of their own, through the mxchat_get_bot_pinecone_config filter."
+msgstr ""
+
+#: admin/views/duckdb/partials/section-diagnostics.php:122
 msgid "Host (for MxChat)"
 msgstr ""
 
-#: admin/views/duckdb/partials/section-diagnostics.php:111
+#: admin/views/duckdb/partials/section-diagnostics.php:126
 msgid "Api-Key"
 msgstr ""
 
@@ -290,13 +352,14 @@ msgstr ""
 msgid "Mirror status:"
 msgstr ""
 
+#. translators: 1: processed rows, 2: target rows, 3: percentage
 #: admin/views/duckdb/partials/section-motherduck.php:80
 #, php-format
 msgid "Progress: %1$d / %2$d (%3$d%%)"
 msgstr ""
 
 #: admin/views/duckdb/partials/section-motherduck.php:90
-#: admin/views/duckdb/settings.php:35
+#: admin/views/duckdb/settings.php:39
 msgid "Last error:"
 msgstr ""
 
@@ -307,16 +370,19 @@ msgid ""
 "plus mirror-drift-check</code>."
 msgstr ""
 
+#. translators: %d = number of pending mirror writes
 #: admin/views/duckdb/partials/section-motherduck.php:110
 #, php-format
 msgid "Pending writes queued: %d"
 msgstr ""
 
+#. translators: %d = number of quarantined entries
 #: admin/views/duckdb/partials/section-motherduck.php:117
 #, php-format
 msgid "Quarantined entries: %d"
 msgstr ""
 
+#. translators: %s = number of seconds since the last drift check
 #: admin/views/duckdb/partials/section-motherduck.php:125
 #, php-format
 msgid "Last drift check: %s ago"
@@ -371,8 +437,11 @@ msgstr ""
 
 #: admin/views/duckdb/partials/section-retrieval-quality.php:12
 msgid ""
-"Blend BM25 full-text scores with vector similarity (requires the DuckDB FTS "
-"extension and a populated `mxchat_plus_duckdb_query_text` filter)."
+"Blend BM25 full-text scores with vector similarity to choose and order the "
+"matches; the score MxChat receives stays the cosine similarity. Requires the "
+"DuckDB FTS extension and the visitor's query text, which the Pinecone proxy "
+"(Option B) supplies on its own; on any other path, return it from the "
+"`mxchat_plus_duckdb_query_text` filter."
 msgstr ""
 
 #: admin/views/duckdb/partials/section-retrieval-quality.php:17
@@ -395,728 +464,115 @@ msgid ""
 "passing N near-duplicate chunks from the same article to the LLM)."
 msgstr ""
 
-#: admin/views/duckdb/partials/section-vector-schema.php:10
+#: admin/views/duckdb/partials/section-vector-schema.php:12
 msgid "Vector schema"
 msgstr ""
 
-#: admin/views/duckdb/partials/section-vector-schema.php:13
+#: admin/views/duckdb/partials/section-vector-schema.php:15
 msgid "Embedding dimension"
 msgstr ""
 
-#: admin/views/duckdb/partials/section-vector-schema.php:22
+#. translators: %d = detected dimension
+#: admin/views/duckdb/partials/section-vector-schema.php:24
 #, php-format
 msgid ""
 "MxChat is currently using dimension %d. This must match the active embedding "
 "model."
 msgstr ""
 
-#: admin/views/duckdb/partials/section-vector-schema.php:29
+#. translators: 1: model MxChat will embed with next, 2: its dimension, 3: model of the stored vectors
+#: admin/views/duckdb/partials/section-vector-schema.php:40
+#, php-format
+msgid ""
+"MxChat's embedding setting now selects %1$s (%2$d dimensions), but its "
+"stored vectors were made with %3$s. New content will be embedded with %1$s, "
+"so the dimension here must match it: wipe the table and re-sync after "
+"switching."
+msgstr ""
+
+#. translators: 1: model MxChat will embed with next, 2: model of the stored vectors
+#: admin/views/duckdb/partials/section-vector-schema.php:48
+#, php-format
+msgid ""
+"MxChat's embedding setting now selects %1$s, but its stored vectors were "
+"made with %2$s. Run Detect dimension to read the new model's size, then wipe "
+"the table and re-sync."
+msgstr ""
+
+#: admin/views/duckdb/partials/section-vector-schema.php:58
 msgid "Custom / Azure OpenAI embeddings detected."
 msgstr ""
 
-#: admin/views/duckdb/partials/section-vector-schema.php:31
+#: admin/views/duckdb/partials/section-vector-schema.php:60
 msgid ""
 "MxChat is embedding through a custom provider, whose output dimension is not "
-"in any registry — the number above is a placeholder. Probe your endpoint to "
-"fill in the real value, then Save."
+"in any registry: until this plugin or MxChat has probed the endpoint, the "
+"number above is a placeholder. Probe your endpoint to fill in the real "
+"value, then Save."
 msgstr ""
 
-#: admin/views/duckdb/partials/section-vector-schema.php:36
+#: admin/views/duckdb/partials/section-vector-schema.php:65
 msgid "Detect dimension"
 msgstr ""
 
-#: admin/views/duckdb/partials/section-vector-schema.php:44
+#: admin/views/duckdb/partials/section-vector-schema.php:73
 msgid "Metric"
 msgstr ""
 
-#: admin/views/duckdb/partials/section-vector-schema.php:51
+#: admin/views/duckdb/partials/section-vector-schema.php:80
 msgid ""
 "MxChat uses cosine similarity — keep cosine unless you have a specific "
 "reason."
 msgstr ""
 
-#: admin/views/duckdb/partials/section-vector-schema.php:55
+#: admin/views/duckdb/partials/section-vector-schema.php:84
 msgid "HNSW index"
 msgstr ""
 
-#: admin/views/duckdb/partials/section-vector-schema.php:59
+#: admin/views/duckdb/partials/section-vector-schema.php:88
 msgid ""
 "Create an HNSW index over the embedding column (recommended for > 10k "
 "entries)"
 msgstr ""
 
-#: admin/views/duckdb/partials/section-vector-schema.php:64
+#: admin/views/duckdb/partials/section-vector-schema.php:93
 msgid "Default top-K"
 msgstr ""
 
-#: admin/views/duckdb/settings.php:24
+#: admin/views/duckdb/settings.php:28
 msgid "MxChat — DuckDB / MotherDuck"
 msgstr ""
 
-#: admin/views/duckdb/settings.php:28
+#: admin/views/duckdb/settings.php:32
 msgid ""
 "Replaces Pinecone with DuckDB (embedded) or MotherDuck (cloud) as the vector "
 "store. The plugin registers itself with MxChat as an alternative Pinecone "
 "backend."
 msgstr ""
 
-#: admin/views/duckdb/settings.php:46
+#: admin/views/duckdb/settings.php:50
 msgid "Performance:"
 msgstr ""
 
-#: admin/views/duckdb/settings.php:48
+#: admin/views/duckdb/settings.php:52
 msgid ""
 "the PHP duckdb extension is not loaded. The plugin falls back to the duckdb "
 "CLI binary, which adds 50–200 ms of process-spawn latency per query."
 msgstr ""
 
-#: admin/views/duckdb/settings.php:53
+#: admin/views/duckdb/settings.php:57
 msgid "MotherDuck + CLI mode:"
 msgstr ""
 
-#: admin/views/duckdb/settings.php:55
+#: admin/views/duckdb/settings.php:59
 msgid ""
 "each query re-runs the MotherDuck ATTACH (network handshake + token "
 "validation). Expect 1–3 s of overhead per call. For production, install the "
 "PECL duckdb extension."
 msgstr ""
 
-#: admin/views/duckdb/settings.php:76
+#: admin/views/duckdb/settings.php:80
 msgid "Save"
-msgstr ""
-
-#: includes/core/class-mxchat-plus-admin.php:40
-#: includes/core/class-mxchat-plus-admin.php:41
-#: includes/core/class-mxchat-plus-admin.php:53
-#: includes/core/class-mxchat-plus-admin.php:54
-#: includes/core/class-mxchat-plus-admin.php:86
-msgid "MxChat Plus"
-msgstr ""
-
-#: includes/core/class-mxchat-plus-admin.php:64
-msgid "Modules"
-msgstr ""
-
-#: includes/core/class-mxchat-plus-admin.php:66
-msgid "Vector store"
-msgstr ""
-
-#: includes/core/class-mxchat-plus-admin.php:69
-msgid "Prompt cache"
-msgstr ""
-
-#: includes/core/class-mxchat-plus-admin.php:76
-msgid "You do not have permission to access this page."
-msgstr ""
-
-#: includes/core/class-mxchat-plus-admin.php:122
-msgid ""
-"Each module works on its own. Turning one off stops it from loading entirely "
-"— its settings and data are left untouched."
-msgstr ""
-
-#: includes/core/class-mxchat-plus-admin.php:153
-msgid "Environment"
-msgstr ""
-
-#: includes/core/class-mxchat-plus-admin.php:159
-msgid "MxChat version"
-msgstr ""
-
-#: includes/core/class-mxchat-plus-admin.php:160
-msgid "unknown"
-msgstr ""
-
-#: includes/core/class-mxchat-plus-admin.php:167
-msgid "MxChat streaming"
-msgstr ""
-
-#: includes/core/class-mxchat-plus-admin.php:169
-msgid "On — prompt caching cannot apply to the main chat."
-msgstr ""
-
-#: includes/core/class-mxchat-plus-admin.php:170
-msgid ""
-"Streaming responses are sent with curl_exec, which bypasses the WordPress "
-"HTTP API, so no filter can reach them. Turn streaming off in MxChat settings "
-"to cache the main chat."
-msgstr ""
-
-#: includes/core/class-mxchat-plus-admin.php:171
-msgid ""
-"Off — the main chat goes through the WordPress HTTP API and can be cached."
-msgstr ""
-
-#: includes/core/class-mxchat-plus-admin.php:177
-msgid "Native prompt cache"
-msgstr ""
-
-#: includes/core/class-mxchat-plus-admin.php:178
-msgid ""
-"MxChat already marks its system prompt for caching. This module does not "
-"duplicate that breakpoint — it adds the ones MxChat leaves out (tool "
-"definitions, conversation history) and the 1-hour TTL."
-msgstr ""
-
-#: includes/core/class-mxchat-plus-admin.php:188
-msgid "You do not have permission to do this."
-msgstr ""
-
-#: includes/core/class-mxchat-plus-host.php:96
-msgid ""
-"The MxChat plugin must be installed and activated for MxChat Plus to do "
-"anything. MxChat Plus extends MxChat and never modifies it."
-msgstr ""
-
-#: includes/core/class-mxchat-plus-modules.php:71
-msgid "DuckDB / MotherDuck vector store"
-msgstr ""
-
-#: includes/core/class-mxchat-plus-modules.php:72
-msgid "Anthropic prompt cache"
-msgstr ""
-
-#: includes/core/class-mxchat-plus-modules.php:73
-msgid "CSV export of selected transcripts"
-msgstr ""
-
-#: includes/duckdb/class-duckdb-admin.php:67
-msgid ""
-"HNSW indexing is enabled but you are running in MotherDuck mode without the "
-"local mirror. MotherDuck cloud does not support the VSS extension, so "
-"queries fall back to brute-force scans (fine under ~100k vectors, noticeably "
-"slower beyond that). <strong>Enable the local mirror</strong> to keep "
-"MotherDuck as the canonical store while getting HNSW acceleration locally, "
-"or switch to \"Embedded\" mode."
-msgstr ""
-
-#: includes/duckdb/class-duckdb-admin.php:84
-msgid ""
-"Mirror drift detected: MotherDuck and the local shadow disagree. Run "
-"<code>wp mxchat-plus mirror-drift-check</code> to see which bot_ids "
-"diverged, then <code>wp mxchat-plus mirror-bootstrap --reset</code> to re-"
-"converge."
-msgstr ""
-
-#: includes/duckdb/class-duckdb-admin.php:96
-msgid "Mirror bootstrap failed. Last error:"
-msgstr ""
-
-#: includes/duckdb/class-duckdb-admin.php:99
-msgid ""
-"The Action Scheduler will retry automatically. To restart from scratch, run "
-"<code>wp mxchat-plus mirror-bootstrap --reset</code>."
-msgstr ""
-
-#: includes/duckdb/class-duckdb-admin.php:114
-#, php-format
-msgid ""
-"%d local mirror writes have failed %d+ times and were moved to quarantine. "
-"Inspect via <code>wp mxchat-plus mirror-drain --status</code>; usual root "
-"causes are disk-full or file-permission errors on the mirror path."
-msgstr ""
-
-#: includes/duckdb/class-duckdb-admin.php:131
-#: includes/duckdb/class-duckdb-admin.php:132
-msgid "DuckDB / MotherDuck"
-msgstr ""
-
-#: includes/duckdb/class-duckdb-admin.php:139
-#: includes/duckdb/class-duckdb-admin.php:140
-msgid "MxChat DuckDB"
-msgstr ""
-
-#: includes/duckdb/class-duckdb-admin.php:170
-msgid "Testing…"
-msgstr ""
-
-#: includes/duckdb/class-duckdb-admin.php:171
-msgid "Syncing…"
-msgstr ""
-
-#: includes/duckdb/class-duckdb-admin.php:172
-msgid "OK"
-msgstr ""
-
-#: includes/duckdb/class-duckdb-admin.php:173
-msgid "Error"
-msgstr ""
-
-#: includes/duckdb/class-duckdb-admin.php:174
-msgid "Sync complete"
-msgstr ""
-
-#: includes/duckdb/class-duckdb-admin.php:176
-msgid "vectors"
-msgstr ""
-
-#: includes/duckdb/class-duckdb-admin.php:178
-#, php-format
-msgid "Reprocessing %1$d / %2$d…"
-msgstr ""
-
-#: includes/duckdb/class-duckdb-admin.php:180
-#, php-format
-msgid "Reprocess complete: %1$d processed, %2$d failed."
-msgstr ""
-
-#: includes/duckdb/class-duckdb-admin.php:181
-msgid ""
-"This will call the embedding API for every post (potential cost). Continue?"
-msgstr ""
-
-#: includes/duckdb/class-duckdb-admin.php:182
-msgid "Probing custom endpoint…"
-msgstr ""
-
-#: includes/duckdb/class-duckdb-admin.php:184
-#, php-format
-msgid "Detected dimension: %d (filled in below — Save to apply)"
-msgstr ""
-
-#: includes/duckdb/class-duckdb-admin.php:223
-#: includes/duckdb/class-duckdb-admin.php:249
-#: includes/duckdb/class-duckdb-admin.php:266
-#: includes/duckdb/class-duckdb-admin.php:298
-#: includes/duckdb/class-duckdb-admin.php:330
-msgid "Insufficient permissions."
-msgstr ""
-
-#: includes/duckdb/class-duckdb-admin.php:230
-msgid "Ping failed."
-msgstr ""
-
-#: includes/duckdb/class-duckdb-admin.php:303
-msgid ""
-"Custom-provider embeddings are not enabled in MxChat. Built-in models "
-"already report their dimension automatically."
-msgstr ""
-
-#: includes/duckdb/class-duckdb-admin.php:306
-msgid ""
-"MxChat is not available or is too old (custom-provider embeddings require "
-"mxchat-basic 3.2.8+)."
-msgstr ""
-
-#: includes/duckdb/class-duckdb-admin.php:314
-msgid "The custom endpoint did not return a valid embedding vector."
-msgstr ""
-
-#: includes/duckdb/class-duckdb-async-reprocess.php:60
-msgid ""
-"Action Scheduler is not active. Install/activate WooCommerce or the "
-"standalone Action Scheduler plugin, or use the synchronous reprocess instead."
-msgstr ""
-
-#: includes/duckdb/class-duckdb-embedded-connection.php:70
-msgid ""
-"Embedded DuckDB mode: neither the PHP duckdb extension nor the CLI binary is "
-"available. Install ext-duckdb (PECL) or set the binary path in the plugin "
-"settings."
-msgstr ""
-
-#: includes/duckdb/class-duckdb-embedded-connection.php:306
-msgid "DuckDB native extension error: "
-msgstr ""
-
-#: includes/duckdb/class-duckdb-embedded-connection.php:490
-msgid "Failed to launch the DuckDB CLI binary."
-msgstr ""
-
-#: includes/duckdb/class-duckdb-embedded-connection.php:544
-#, php-format
-msgid "DuckDB CLI timed out after %d seconds."
-msgstr ""
-
-#: includes/duckdb/class-duckdb-embedded-connection.php:557
-#, php-format
-msgid "DuckDB CLI failed (exit code %1$d): %2$s"
-msgstr ""
-
-#: includes/duckdb/class-duckdb-embedded-connection.php:559
-msgid "no error output"
-msgstr ""
-
-#: includes/duckdb/class-duckdb-embedded-connection.php:781
-msgid "Non-numeric value in array parameter: "
-msgstr ""
-
-#: includes/duckdb/class-duckdb-motherduck-connection.php:41
-msgid "MotherDuck token is not configured."
-msgstr ""
-
-#: includes/duckdb/class-duckdb-motherduck-connection.php:46
-msgid "Invalid MotherDuck database name (letters, digits and underscore only)."
-msgstr ""
-
-#: includes/duckdb/class-duckdb-mysql-sync.php:58
-msgid ""
-"DuckDB mysql extension is not available; cannot use the native sync path."
-msgstr ""
-
-#: includes/duckdb/class-duckdb-options.php:375
-msgid ""
-"The MotherDuck local mirror only applies when the backend is set to "
-"MotherDuck. Toggle ignored."
-msgstr ""
-
-#: includes/duckdb/class-duckdb-options.php:393
-#, php-format
-msgid ""
-"The configured DuckDB CLI path (%s) did not respond to a probe query. Double-"
-"check that it points to the duckdb binary."
-msgstr ""
-
-#: includes/duckdb/class-duckdb-options.php:422
-#, php-format
-msgid ""
-"Cannot change embedding storage: the table already contains %d vectors. "
-"Export, wipe, and re-import to switch storage layout."
-msgstr ""
-
-#: includes/duckdb/class-duckdb-options.php:487
-#, php-format
-msgid ""
-"Cannot change the embedding dimension: the table already contains %1$d "
-"vectors at dimension %2$d. Wipe the table and re-sync to adopt %3$d."
-msgstr ""
-
-#: includes/duckdb/class-duckdb-pinecone-migrator.php:34
-msgid "Missing Pinecone API key."
-msgstr ""
-
-#: includes/duckdb/class-duckdb-pinecone-migrator.php:37
-msgid "Missing Pinecone host."
-msgstr ""
-
-#: includes/duckdb/class-duckdb-pinecone-proxy.php:116
-msgid "Rate limit exceeded for this namespace. Try again shortly."
-msgstr ""
-
-#: includes/duckdb/class-duckdb-post-reprocessor.php:35
-#: includes/duckdb/class-duckdb-post-reprocessor.php:116
-msgid "MxChat_Utils is not available — is mxchat-basic activated?"
-msgstr ""
-
-#: includes/duckdb/class-duckdb-post-reprocessor.php:42
-#: includes/duckdb/class-duckdb-post-reprocessor.php:122
-msgid "No embedding API key configured in MxChat."
-msgstr ""
-
-#: includes/duckdb/class-duckdb-quantization.php:40
-msgid "Non-numeric value during INT8 quantization."
-msgstr ""
-
-#: includes/duckdb/class-duckdb-search-adapter.php:227
-#, php-format
-msgid "vector search error — %s"
-msgstr ""
-
-#: includes/duckdb/class-duckdb-vector-store-query.php:63
-#, php-format
-msgid ""
-"Embedding dimension mismatch: expected %1$d, got %2$d. Update embedding_dim "
-"or re-sync."
-msgstr ""
-
-#: includes/duckdb/class-duckdb-vector-store.php:225
-#, php-format
-msgid ""
-"Embedding dimension mismatch on upsert: vector_id=%1$s, expected %2$d, got "
-"%3$d."
-msgstr ""
-
-#: includes/duckdb/trait-duckdb-sql-helpers.php:41
-#, php-format
-msgid ""
-"Refusing to quote unsafe identifier \"%s\". Identifiers must match /^[a-zA-"
-"Z0-9_]+$/. Did the value bypass the options sanitiser?"
-msgstr ""
-
-#: includes/duckdb/trait-duckdb-sql-helpers.php:94
-#, php-format
-msgid ""
-"Non-numeric embedding component at index %1$d (type %2$s). Refusing to write "
-"a corrupted vector."
-msgstr ""
-
-#: includes/promptcache/class-promptcache-admin.php:36
-msgid "MxChat Plus — Prompt Cache"
-msgstr ""
-
-#: includes/promptcache/class-promptcache-admin.php:55
-msgid "Prompt Cache"
-msgstr ""
-
-#: includes/promptcache/class-promptcache-admin.php:67
-msgid "No data yet — statistics start filling in with the first API responses."
-msgstr ""
-
-#: includes/promptcache/class-promptcache-admin.php:74
-msgid "Last 24 hours"
-msgstr ""
-
-#: includes/promptcache/class-promptcache-admin.php:77
-msgid "Since installation"
-msgstr ""
-
-#: includes/promptcache/class-promptcache-admin.php:80
-msgid "Per-model breakdown: wp mxchat-plus promptcache stats --by-model"
-msgstr ""
-
-#: includes/promptcache/class-promptcache-admin.php:102
-msgid "Taux de hit (cache)"
-msgstr ""
-
-#: includes/promptcache/class-promptcache-admin.php:103
-msgid "Requêtes"
-msgstr ""
-
-#: includes/promptcache/class-promptcache-admin.php:104
-msgid "Tokens lus du cache"
-msgstr ""
-
-#: includes/promptcache/class-promptcache-admin.php:105
-msgid "Tokens entrée bruts"
-msgstr ""
-
-#: includes/promptcache/class-promptcache-cli.php:47
-msgid "Aucune statistique cumulative enregistrée."
-msgstr ""
-
-#: includes/promptcache/class-promptcache-cli.php:49
-msgid "Cumulatif (depuis installation)"
-msgstr ""
-
-#: includes/promptcache/class-promptcache-cli.php:51
-msgid "Détail par modèle (cumulatif)"
-msgstr ""
-
-#: includes/promptcache/class-promptcache-cli.php:58
-msgid "Aucune requête dans les dernières 24 h."
-msgstr ""
-
-#: includes/promptcache/class-promptcache-cli.php:64
-msgid "Dernières 24 h (glissant)"
-msgstr ""
-
-#: includes/promptcache/class-promptcache-cli.php:67
-msgid "Détail par modèle (24 h)"
-msgstr ""
-
-#: includes/promptcache/class-promptcache-cli.php:86
-msgid "Statistiques (24 h + cumulatives) et debug réinitialisés."
-msgstr ""
-
-#: includes/promptcache/class-promptcache-cli.php:90
-msgid "Statistiques 24 h et debug réinitialisés (cumulatif conservé)."
-msgstr ""
-
-#: includes/promptcache/class-promptcache-cli.php:98
-msgid "Aucune donnée de debug (transient expiré ou aucune requête récente)."
-msgstr ""
-
-#: includes/promptcache/class-promptcache-cli.php:101
-msgid "oui"
-msgstr ""
-
-#: includes/promptcache/class-promptcache-cli.php:102
-msgid "non"
-msgstr ""
-
-#: includes/promptcache/class-promptcache-cli.php:105
-#, php-format
-msgid ""
-"Dernière requête  : %s\n"
-"Modèle (request)  : %s\n"
-"Modèle (réponse)  : %s\n"
-"Seuil min (chars) : %d\n"
-"Breakpoints ajoutés :\n"
-"  - tools     : %s\n"
-"  - system    : %s\n"
-"  - prev_user : %s\n"
-"  - last_user : %s\n"
-"Usage (tokens) :\n"
-"  - input                 : %d\n"
-"  - cache_creation_input  : %d\n"
-"  - cache_read_input      : %d"
-msgstr ""
-
-#: includes/promptcache/class-promptcache-cli.php:156
-#, php-format
-msgid "  Requêtes              : %d"
-msgstr ""
-
-#: includes/promptcache/class-promptcache-cli.php:157
-#, php-format
-msgid "  Tokens lus du cache   : %d"
-msgstr ""
-
-#: includes/promptcache/class-promptcache-cli.php:158
-#, php-format
-msgid "  Tokens écrits cache   : %d"
-msgstr ""
-
-#: includes/promptcache/class-promptcache-cli.php:159
-#, php-format
-msgid "  Tokens entrée bruts   : %d"
-msgstr ""
-
-#: includes/promptcache/class-promptcache-cli.php:160
-#, php-format
-msgid "  Taux de hit (cache)   : %.1f %%"
-msgstr ""
-
-#: includes/promptcache/class-promptcache-cli.php:164
-#, php-format
-msgid "  Depuis                : %s"
-msgstr ""
-
-#: includes/promptcache/class-promptcache-models.php:298
-msgid ""
-"  ⚠ Écritures de cache > lectures : préfixe probablement instable (shortcode/"
-"donnée dynamique dans le system prompt, historique reformaté entre les "
-"tours) ou trafic trop faible pour rentabiliser le cache. Voir « Limites "
-"connues » du README."
-msgstr ""
-
-#: includes/transcripts/class-transcripts-export.php:74
-msgid "Export as CSV (selection, or by date range)"
-msgstr ""
-
-#: includes/transcripts/class-transcripts-export.php:75
-msgid "Export by date range"
-msgstr ""
-
-#: includes/transcripts/class-transcripts-export.php:76
-msgid ""
-"No conversation is selected. Choose a period — every conversation between "
-"these two dates will be exported."
-msgstr ""
-
-#: includes/transcripts/class-transcripts-export.php:77
-msgid "Start date"
-msgstr ""
-
-#: includes/transcripts/class-transcripts-export.php:78
-msgid "End date"
-msgstr ""
-
-#: includes/transcripts/class-transcripts-export.php:79
-msgid "Please provide both a start and an end date."
-msgstr ""
-
-#: includes/transcripts/class-transcripts-export.php:80
-msgid "The start date must be before the end date."
-msgstr ""
-
-#: includes/transcripts/class-transcripts-export.php:81
-msgid "Cancel"
-msgstr ""
-
-#: includes/transcripts/class-transcripts-export.php:82
-msgid "Export CSV"
-msgstr ""
-
-#: includes/transcripts/class-transcripts-export.php:93
-msgid "You do not have sufficient permissions to export transcripts."
-msgstr ""
-
-#: includes/transcripts/class-transcripts-export.php:116
-msgid "No messages found for the selected conversations."
-msgstr ""
-
-#: includes/transcripts/class-transcripts-export.php:128
-msgid ""
-"Select at least one conversation, or provide a valid start and end date."
-msgstr ""
-
-#: includes/transcripts/class-transcripts-export.php:142
-msgid "No conversations found in that date range."
-msgstr ""
-
-#: includes/transcripts/class-transcripts-export.php:157
-msgid "Could not open the output stream for the export."
-msgstr ""
-
-#: includes/transcripts/class-transcripts-export.php:164
-msgid "Session ID"
-msgstr ""
-
-#: includes/transcripts/class-transcripts-export.php:165
-msgid "Email"
-msgstr ""
-
-#: includes/transcripts/class-transcripts-export.php:166
-msgid "User identifier"
-msgstr ""
-
-#: includes/transcripts/class-transcripts-export.php:167
-msgid "Role"
-msgstr ""
-
-#: includes/transcripts/class-transcripts-export.php:168
-msgid "Message"
-msgstr ""
-
-#: includes/transcripts/class-transcripts-export.php:169
-msgid "Timestamp"
-msgstr ""
-
-#. translators: 1: lowest valid dimension id, 2: highest valid dimension id
-#: includes/tracking/class-tracking-options.php:111
-#, php-format
-msgid ""
-"The Matomo custom dimension ID must be a number between %1$d and %2$d. The "
-"value entered was ignored, and no custom dimension will be sent."
-msgstr ""
-
-#: includes/tracking/class-tracking-report.php:246
-msgid "You do not have sufficient permissions to export link clicks."
-msgstr ""
-
-#: includes/tracking/class-tracking-report.php:252
-msgid ""
-"MxChat has never recorded a link click on this site: its click table does "
-"not exist."
-msgstr ""
-
-#: includes/tracking/class-tracking-report.php:265
-msgid "No link clicks found for that period."
-msgstr ""
-
-#: includes/tracking/class-tracking-report.php:284
-#: admin/views/tracking/settings.php:180
-msgid "URL"
-msgstr ""
-
-#: includes/tracking/class-tracking-report.php:285
-#: admin/views/tracking/settings.php:181
-msgid "Scope"
-msgstr ""
-
-#: includes/tracking/class-tracking-report.php:286
-#: admin/views/tracking/settings.php:182
-msgid "Clicks"
-msgstr ""
-
-#: includes/tracking/class-tracking-report.php:287
-#: admin/views/tracking/settings.php:183
-msgid "Sessions"
-msgstr ""
-
-#: includes/tracking/class-tracking-report.php:290
-msgid "Last click (UTC)"
-msgstr ""
-
-#: includes/tracking/class-tracking-report.php:297
-#: admin/views/tracking/settings.php:212
-msgid "Internal"
-msgstr ""
-
-#: includes/tracking/class-tracking-report.php:298
-#: admin/views/tracking/settings.php:214
-msgid "External"
 msgstr ""
 
 #: admin/views/tracking/settings.php:25
@@ -1158,14 +614,33 @@ msgid ""
 msgstr ""
 
 #: admin/views/tracking/settings.php:72
-msgid "Session id"
+msgid "Chat opened"
 msgstr ""
 
 #: admin/views/tracking/settings.php:77
+msgid "Also send an event when a visitor opens the chat window"
+msgstr ""
+
+#. translators: 1: Matomo event action, keep as is; 2: GA4 event name, keep as is
+#: admin/views/tracking/settings.php:85
+#, php-format
+msgid ""
+"Off by default. Adds the Matomo action %1$s and the GA4 event %2$s, at most "
+"once per chatbot per page load. A chatbot embedded in the page is never "
+"reported: it is on screen from the start, so nobody opened it. A floating "
+"window counts however it was revealed, including by another plugin or a "
+"theme button. Needs MxChat 3.2.22 or later; older versions send nothing."
+msgstr ""
+
+#: admin/views/tracking/settings.php:95
+msgid "Session id"
+msgstr ""
+
+#: admin/views/tracking/settings.php:100
 msgid "Include the MxChat session id in each event"
 msgstr ""
 
-#: admin/views/tracking/settings.php:81
+#: admin/views/tracking/settings.php:104
 msgid ""
 "The session id is the join key into MxChat's transcripts table: with it, a "
 "click can be traced back to the conversation that produced it. It also means "
@@ -1174,26 +649,26 @@ msgid ""
 "is the conservative choice; the events still work without it."
 msgstr ""
 
-#: admin/views/tracking/settings.php:90
+#: admin/views/tracking/settings.php:113
 msgid "Matomo custom dimension"
 msgstr ""
 
-#: admin/views/tracking/settings.php:99
+#: admin/views/tracking/settings.php:122
 msgid ""
 "The session id is also written to this Matomo custom dimension — give the id "
 "(1 to 999) of the dimension you created in Matomo. Leave it at 0 to send no "
 "custom dimension; it has no effect while the session id is not sent."
 msgstr ""
 
-#: admin/views/tracking/settings.php:107
+#: admin/views/tracking/settings.php:130
 msgid "Debug"
 msgstr ""
 
-#: admin/views/tracking/settings.php:112
+#: admin/views/tracking/settings.php:135
 msgid "Log every event to the browser console"
 msgstr ""
 
-#: admin/views/tracking/settings.php:116
+#: admin/views/tracking/settings.php:139
 msgid ""
 "Each event is printed in the DevTools console, prefixed [MxChat Plus "
 "tracking]. It logs for every visitor, not only for administrators, so this "
@@ -1201,19 +676,19 @@ msgid ""
 "right."
 msgstr ""
 
-#: admin/views/tracking/settings.php:129
+#: admin/views/tracking/settings.php:152
 msgid "Clicked links"
 msgstr ""
 
-#: admin/views/tracking/settings.php:135
+#: admin/views/tracking/settings.php:158
 msgid ""
 "MxChat logs link clicks server-side into its own table, which it creates "
-"when the plugin is activated. That table does not exist on this site, so no "
-"click has ever been recorded and there is nothing to report. It appears the "
-"next time MxChat is activated."
+"when the plugin is activated and again after each MxChat update. That table "
+"does not exist on this site, so there is nothing to report. Deactivating and "
+"reactivating MxChat creates it now."
 msgstr ""
 
-#: admin/views/tracking/settings.php:144
+#: admin/views/tracking/settings.php:167
 msgid ""
 "This report counts what MxChat itself records server-side, which is a "
 "narrower population than the events sent above: MxChat only tracks absolute "
@@ -1222,30 +697,836 @@ msgid ""
 "construction."
 msgstr ""
 
-#: admin/views/tracking/settings.php:151
+#: admin/views/tracking/settings.php:174
+msgid ""
+"Counts are not comparable across the MxChat 3.2.24 and 3.2.25 updates, in "
+"either direction: MxChat changed which clicks it logs and which addresses it "
+"turns into links, so one page can also appear under two spellings. Compare "
+"the Sessions column rather than Clicks across those dates."
+msgstr ""
+
+#: admin/views/tracking/settings.php:181
 msgid "No click has been recorded yet."
 msgstr ""
 
 #. translators: 1: number of clicks, 2: number of distinct links, 3: number of distinct sessions
-#: admin/views/tracking/settings.php:159
+#: admin/views/tracking/settings.php:189
 #, php-format
 msgid "%1$s clicks recorded, on %2$s links, across %3$s sessions."
 msgstr ""
 
 #. translators: %s: number of links listed in the table
-#: admin/views/tracking/settings.php:170
+#: admin/views/tracking/settings.php:200
 #, php-format
 msgid "Only the %s most clicked links are listed here."
 msgstr ""
 
-#: admin/views/tracking/settings.php:184
+#: admin/views/tracking/settings.php:210
+#: includes/tracking/class-tracking-report.php:312
+msgid "URL"
+msgstr ""
+
+#: admin/views/tracking/settings.php:211
+#: includes/tracking/class-tracking-report.php:313
+msgid "Scope"
+msgstr ""
+
+#: admin/views/tracking/settings.php:212
+#: includes/tracking/class-tracking-report.php:314
+msgid "Clicks"
+msgstr ""
+
+#: admin/views/tracking/settings.php:213
+#: includes/tracking/class-tracking-report.php:315
+msgid "Sessions"
+msgstr ""
+
+#: admin/views/tracking/settings.php:214
 msgid "Last click"
 msgstr ""
 
-#: admin/views/tracking/settings.php:236
+#: admin/views/tracking/settings.php:242
+#: includes/tracking/class-tracking-report.php:325
+msgid "Internal"
+msgstr ""
+
+#: admin/views/tracking/settings.php:244
+#: includes/tracking/class-tracking-report.php:326
+msgid "External"
+msgstr ""
+
+#: admin/views/tracking/settings.php:264
+#: includes/transcripts/class-transcripts-export.php:117
+msgid "Export CSV"
+msgstr ""
+
+#: admin/views/tracking/settings.php:266
 msgid "Downloads the clicks MxChat has logged as a CSV file."
+msgstr ""
+
+#: includes/core/class-mxchat-plus-admin.php:40
+#: includes/core/class-mxchat-plus-admin.php:41
+#: includes/core/class-mxchat-plus-admin.php:53
+#: includes/core/class-mxchat-plus-admin.php:54
+#: includes/core/class-mxchat-plus-admin.php:89
+msgid "MxChat Plus"
+msgstr ""
+
+#: includes/core/class-mxchat-plus-admin.php:64
+msgid "Modules"
+msgstr ""
+
+#: includes/core/class-mxchat-plus-admin.php:66
+msgid "Vector store"
+msgstr ""
+
+#: includes/core/class-mxchat-plus-admin.php:69
+msgid "Prompt cache"
+msgstr ""
+
+#: includes/core/class-mxchat-plus-admin.php:79
+msgid "You do not have permission to access this page."
+msgstr ""
+
+#: includes/core/class-mxchat-plus-admin.php:128
+msgid ""
+"Each module works on its own. Turning one off stops it from loading entirely "
+"— its settings and data are left untouched."
+msgstr ""
+
+#: includes/core/class-mxchat-plus-admin.php:159
+msgid "Environment"
+msgstr ""
+
+#: includes/core/class-mxchat-plus-admin.php:178
+msgid "unknown"
+msgstr ""
+
+#. translators: %s: oldest supported MxChat version, e.g. 3.2.21
+#: includes/core/class-mxchat-plus-admin.php:183
+#, php-format
+msgid ""
+"older than %s, the oldest MxChat version MxChat Plus supports. Some modules "
+"may not attach until MxChat is updated."
+msgstr ""
+
+#. translators: %s: last MxChat version MxChat Plus was checked against, e.g. 3.2.25
+#: includes/core/class-mxchat-plus-admin.php:190
+#, php-format
+msgid ""
+"newer than %s, the last MxChat version MxChat Plus was checked against. It "
+"usually keeps working; if a module misbehaves, check the MxChat changelog "
+"first."
+msgstr ""
+
+#: includes/core/class-mxchat-plus-admin.php:195
+msgid "MxChat version"
+msgstr ""
+
+#: includes/core/class-mxchat-plus-admin.php:204
+msgid "On — this module cannot add its breakpoints to streamed replies."
+msgstr ""
+
+#: includes/core/class-mxchat-plus-admin.php:205
+msgid ""
+"Streaming responses are sent with curl_exec, which bypasses the WordPress "
+"HTTP API, so no filter can reach them."
+msgstr ""
+
+#: includes/core/class-mxchat-plus-admin.php:211
+msgid ""
+"MxChat's own system-prompt breakpoint still applies to them (5-minute TTL); "
+"only this module's additions — history breakpoints and the 1-hour TTL — are "
+"lost."
+msgstr ""
+
+#: includes/core/class-mxchat-plus-admin.php:217
+msgid ""
+"AI Tools are active with a Claude model: MxChat answers most turns through "
+"its buffered tool loop (wp_remote_post), which this module does cache, even "
+"with streaming on. Turns that fall back to streaming are not cached."
+msgstr ""
+
+#: includes/core/class-mxchat-plus-admin.php:218
+msgid ""
+"AI Tools are active with a Claude model: turns where Claude calls a tool go "
+"through MxChat's buffered tool loop (wp_remote_post) and are cached; the "
+"other turns stream and are not. Turn streaming off in MxChat settings to "
+"cache them too."
+msgstr ""
+
+#: includes/core/class-mxchat-plus-admin.php:220
+msgid "Turn streaming off in MxChat settings to cache the main chat."
+msgstr ""
+
+#: includes/core/class-mxchat-plus-admin.php:224
+msgid ""
+"Off — the main chat goes through the WordPress HTTP API and can be cached."
+msgstr ""
+
+#: includes/core/class-mxchat-plus-admin.php:229
+msgid ""
+"This reflects the global MxChat settings; a bot with its own settings can "
+"differ."
+msgstr ""
+
+#: includes/core/class-mxchat-plus-admin.php:231
+msgid "MxChat streaming"
+msgstr ""
+
+#: includes/core/class-mxchat-plus-admin.php:235
+msgid "Native prompt cache"
+msgstr ""
+
+#: includes/core/class-mxchat-plus-admin.php:236
+msgid ""
+"MxChat already marks its system prompt for caching, which also covers the AI "
+"Tools definitions sent before it. This module does not duplicate that "
+"breakpoint. It adds a rolling pair of breakpoints on the conversation "
+"history, a tool-definitions breakpoint that keeps tools cached when the "
+"system prompt varies ({context}, {visitor_name}, {current_date}, "
+"{current_datetime}), and the 1-hour TTL."
+msgstr ""
+
+#: includes/core/class-mxchat-plus-admin.php:245
+msgid "You do not have permission to do this."
+msgstr ""
+
+#: includes/core/class-mxchat-plus-host.php:264
+msgid ""
+"The MxChat plugin must be installed and activated for MxChat Plus to do "
+"anything. MxChat Plus extends MxChat and never modifies it."
+msgstr ""
+
+#: includes/core/class-mxchat-plus-modules.php:84
+msgid "DuckDB / MotherDuck vector store"
+msgstr ""
+
+#: includes/core/class-mxchat-plus-modules.php:85
+msgid "Anthropic prompt cache"
+msgstr ""
+
+#: includes/core/class-mxchat-plus-modules.php:86
+msgid "CSV export of selected transcripts"
 msgstr ""
 
 #: includes/core/class-mxchat-plus-modules.php:87
 msgid "Link and suggestion click tracking"
+msgstr ""
+
+#: includes/duckdb/class-duckdb-admin.php:71
+msgid ""
+"HNSW indexing is enabled but you are running in MotherDuck mode without the "
+"local mirror. MotherDuck cloud does not support the VSS extension, so "
+"queries fall back to brute-force scans (fine under ~100k vectors, noticeably "
+"slower beyond that). <strong>Enable the local mirror</strong> to keep "
+"MotherDuck as the canonical store while getting HNSW acceleration locally, "
+"or switch to \"Embedded\" mode."
+msgstr ""
+
+#: includes/duckdb/class-duckdb-admin.php:88
+msgid ""
+"Mirror drift detected: MotherDuck and the local shadow disagree. Run "
+"<code>wp mxchat-plus mirror-drift-check</code> to see which bot_ids "
+"diverged, then <code>wp mxchat-plus mirror-bootstrap --reset</code> to re-"
+"converge."
+msgstr ""
+
+#: includes/duckdb/class-duckdb-admin.php:100
+msgid "Mirror bootstrap failed. Last error:"
+msgstr ""
+
+#: includes/duckdb/class-duckdb-admin.php:103
+msgid ""
+"The Action Scheduler will retry automatically. To restart from scratch, run "
+"<code>wp mxchat-plus mirror-bootstrap --reset</code>."
+msgstr ""
+
+#: includes/duckdb/class-duckdb-admin.php:118
+#, php-format
+msgid ""
+"%d local mirror writes have failed %d+ times and were moved to quarantine. "
+"Inspect via <code>wp mxchat-plus mirror-drain --status</code>; usual root "
+"causes are disk-full or file-permission errors on the mirror path."
+msgstr ""
+
+#: includes/duckdb/class-duckdb-admin.php:135
+#: includes/duckdb/class-duckdb-admin.php:136
+msgid "DuckDB / MotherDuck"
+msgstr ""
+
+#: includes/duckdb/class-duckdb-admin.php:143
+#: includes/duckdb/class-duckdb-admin.php:144
+msgid "MxChat DuckDB"
+msgstr ""
+
+#: includes/duckdb/class-duckdb-admin.php:179
+msgid "Testing…"
+msgstr ""
+
+#: includes/duckdb/class-duckdb-admin.php:180
+msgid "Syncing…"
+msgstr ""
+
+#: includes/duckdb/class-duckdb-admin.php:181
+msgid "OK"
+msgstr ""
+
+#: includes/duckdb/class-duckdb-admin.php:182
+msgid "Error"
+msgstr ""
+
+#: includes/duckdb/class-duckdb-admin.php:183
+msgid "Sync complete"
+msgstr ""
+
+#. translators: short suffix shown after a vector count in admin status messages
+#: includes/duckdb/class-duckdb-admin.php:185
+msgid "vectors"
+msgstr ""
+
+#. translators: 1: done count, 2: total count
+#: includes/duckdb/class-duckdb-admin.php:187
+#, php-format
+msgid "Reprocessing %1$d / %2$d…"
+msgstr ""
+
+#. translators: 1: processed count, 2: failed count
+#: includes/duckdb/class-duckdb-admin.php:189
+#, php-format
+msgid "Reprocess complete: %1$d processed, %2$d failed."
+msgstr ""
+
+#: includes/duckdb/class-duckdb-admin.php:190
+msgid ""
+"This will call the embedding API for every post (potential cost). Continue?"
+msgstr ""
+
+#: includes/duckdb/class-duckdb-admin.php:191
+msgid "Probing custom endpoint…"
+msgstr ""
+
+#. translators: %d = detected vector dimension
+#: includes/duckdb/class-duckdb-admin.php:193
+#, php-format
+msgid "Detected dimension: %d (filled in below — Save to apply)"
+msgstr ""
+
+#: includes/duckdb/class-duckdb-admin.php:241
+#: includes/duckdb/class-duckdb-admin.php:267
+#: includes/duckdb/class-duckdb-admin.php:284
+#: includes/duckdb/class-duckdb-admin.php:320
+#: includes/duckdb/class-duckdb-admin.php:352
+msgid "Insufficient permissions."
+msgstr ""
+
+#: includes/duckdb/class-duckdb-admin.php:248
+msgid "Ping failed."
+msgstr ""
+
+#: includes/duckdb/class-duckdb-admin.php:325
+msgid ""
+"Custom-provider embeddings are not enabled in MxChat. Built-in models "
+"already report their dimension automatically."
+msgstr ""
+
+#: includes/duckdb/class-duckdb-admin.php:328
+msgid ""
+"MxChat is not available or is too old (custom-provider embeddings require "
+"mxchat-basic 3.2.8+)."
+msgstr ""
+
+#: includes/duckdb/class-duckdb-admin.php:336
+msgid "The custom endpoint did not return a valid embedding vector."
+msgstr ""
+
+#: includes/duckdb/class-duckdb-async-reprocess.php:62
+msgid ""
+"Action Scheduler is not active. Install/activate WooCommerce or the "
+"standalone Action Scheduler plugin, or use the synchronous reprocess instead."
+msgstr ""
+
+#: includes/duckdb/class-duckdb-embedded-connection.php:70
+msgid ""
+"Embedded DuckDB mode: neither the PHP duckdb extension nor the CLI binary is "
+"available. Install ext-duckdb (PECL) or set the binary path in the plugin "
+"settings."
+msgstr ""
+
+#: includes/duckdb/class-duckdb-embedded-connection.php:306
+msgid "DuckDB native extension error: "
+msgstr ""
+
+#: includes/duckdb/class-duckdb-embedded-connection.php:490
+msgid "Failed to launch the DuckDB CLI binary."
+msgstr ""
+
+#. translators: %d = timeout seconds
+#: includes/duckdb/class-duckdb-embedded-connection.php:544
+#, php-format
+msgid "DuckDB CLI timed out after %d seconds."
+msgstr ""
+
+#. translators: 1: exit code, 2: stderr content
+#: includes/duckdb/class-duckdb-embedded-connection.php:557
+#, php-format
+msgid "DuckDB CLI failed (exit code %1$d): %2$s"
+msgstr ""
+
+#: includes/duckdb/class-duckdb-embedded-connection.php:559
+msgid "no error output"
+msgstr ""
+
+#: includes/duckdb/class-duckdb-embedded-connection.php:781
+msgid "Non-numeric value in array parameter: "
+msgstr ""
+
+#: includes/duckdb/class-duckdb-motherduck-connection.php:41
+msgid "MotherDuck token is not configured."
+msgstr ""
+
+#: includes/duckdb/class-duckdb-motherduck-connection.php:46
+msgid "Invalid MotherDuck database name (letters, digits and underscore only)."
+msgstr ""
+
+#: includes/duckdb/class-duckdb-mysql-sync.php:58
+msgid ""
+"DuckDB mysql extension is not available; cannot use the native sync path."
+msgstr ""
+
+#: includes/duckdb/class-duckdb-options.php:789
+msgid ""
+"The MotherDuck local mirror only applies when the backend is set to "
+"MotherDuck. Toggle ignored."
+msgstr ""
+
+#. translators: %s = configured binary path
+#: includes/duckdb/class-duckdb-options.php:807
+#, php-format
+msgid ""
+"The configured DuckDB CLI path (%s) did not respond to a probe query. Double-"
+"check that it points to the duckdb binary."
+msgstr ""
+
+#. translators: %d = row count
+#: includes/duckdb/class-duckdb-options.php:836
+#, php-format
+msgid ""
+"Cannot change embedding storage: the table already contains %d vectors. "
+"Export, wipe, and re-import to switch storage layout."
+msgstr ""
+
+#. translators: 1: row count, 2: current dim, 3: requested dim
+#: includes/duckdb/class-duckdb-options.php:902
+#, php-format
+msgid ""
+"Cannot change the embedding dimension: the table already contains %1$d "
+"vectors at dimension %2$d. Wipe the table and re-sync to adopt %3$d."
+msgstr ""
+
+#: includes/duckdb/class-duckdb-pinecone-migrator.php:106
+msgid "Missing Pinecone API key."
+msgstr ""
+
+#: includes/duckdb/class-duckdb-pinecone-migrator.php:109
+msgid "Missing Pinecone host."
+msgstr ""
+
+#. translators: %s = the value given
+#: includes/duckdb/class-duckdb-pinecone-migrator.php:115
+#, php-format
+msgid "Unknown Pinecone index type \"%s\". Use auto, vector or document."
+msgstr ""
+
+#: includes/duckdb/class-duckdb-pinecone-proxy.php:316
+msgid "Rate limit exceeded for this namespace. Try again shortly."
+msgstr ""
+
+#: includes/duckdb/class-duckdb-pinecone-proxy.php:1015
+msgid ""
+"The MxChat Plus DuckDB proxy only speaks the Pinecone vector-index protocol; "
+"document-index requests are not supported. Set the Pinecone index type to "
+"\"vector\" for this bot."
+msgstr ""
+
+#: includes/duckdb/class-duckdb-post-reprocessor.php:69
+#: includes/duckdb/class-duckdb-post-reprocessor.php:132
+msgid "MxChat_Utils is not available — is mxchat-basic activated?"
+msgstr ""
+
+#: includes/duckdb/class-duckdb-post-reprocessor.php:353
+#: includes/duckdb/class-duckdb-post-reprocessor.php:388
+msgid "No embedding API key configured in MxChat."
+msgstr ""
+
+#: includes/duckdb/class-duckdb-post-reprocessor.php:374
+msgid "The Custom Provider Base URL is not configured in MxChat."
+msgstr ""
+
+#: includes/duckdb/class-duckdb-quantization.php:40
+msgid "Non-numeric value during INT8 quantization."
+msgstr ""
+
+#: includes/duckdb/class-duckdb-search-adapter.php:457
+msgid ""
+"MxChat Plus serves the default bot from DuckDB (Default-bot routing is on), "
+"so the Pinecone document-index tools are unavailable: the API key in this "
+"form is the DuckDB proxy token, not a Pinecone key. Turn Default-bot routing "
+"off in MxChat Plus → DuckDB to manage a Pinecone index."
+msgstr ""
+
+#: includes/duckdb/class-duckdb-search-adapter.php:488
+msgid ""
+"MxChat Plus stopped a request that would have sent the DuckDB proxy token to "
+"Pinecone. That token only opens this site's DuckDB proxy."
+msgstr ""
+
+#. translators: %s = underlying error message
+#: includes/duckdb/class-duckdb-search-adapter.php:562
+#, php-format
+msgid "vector search error — %s"
+msgstr ""
+
+#: includes/duckdb/class-duckdb-search-adapter.php:579
+msgid ""
+"DuckDB serves the default bot (Default-bot routing is on). The Pinecone card "
+"shows the DuckDB proxy's host and token instead of your Pinecone "
+"credentials; saving the card keeps your real credentials. The document-index "
+"tools (Check index, Create index, Migrate) are unavailable while routing is "
+"on."
+msgstr ""
+
+#. translators: 1: expected dim, 2: actual dim
+#: includes/duckdb/class-duckdb-vector-store-query.php:106
+#, php-format
+msgid ""
+"Embedding dimension mismatch: expected %1$d, got %2$d. Update embedding_dim "
+"or re-sync."
+msgstr ""
+
+#. translators: 1: vector id, 2: expected dim, 3: actual dim
+#: includes/duckdb/class-duckdb-vector-store.php:440
+#, php-format
+msgid ""
+"Embedding dimension mismatch on upsert: vector_id=%1$s, expected %2$d, got "
+"%3$d."
+msgstr ""
+
+#. translators: %s = the offending identifier
+#: includes/duckdb/trait-duckdb-sql-helpers.php:41
+#, php-format
+msgid ""
+"Refusing to quote unsafe identifier \"%s\". Identifiers must match /^[a-zA-"
+"Z0-9_]+$/. Did the value bypass the options sanitiser?"
+msgstr ""
+
+#. translators: 1: index, 2: PHP type
+#: includes/duckdb/trait-duckdb-sql-helpers.php:94
+#, php-format
+msgid ""
+"Non-numeric embedding component at index %1$d (type %2$s). Refusing to write "
+"a corrupted vector."
+msgstr ""
+
+#: includes/promptcache/class-promptcache-admin.php:36
+msgid "MxChat Plus — Prompt Cache"
+msgstr ""
+
+#: includes/promptcache/class-promptcache-admin.php:55
+msgid "Prompt Cache"
+msgstr ""
+
+#: includes/promptcache/class-promptcache-admin.php:67
+msgid "No data yet — statistics start filling in with the first API responses."
+msgstr ""
+
+#: includes/promptcache/class-promptcache-admin.php:74
+msgid "Last 24 hours"
+msgstr ""
+
+#: includes/promptcache/class-promptcache-admin.php:77
+msgid "Since installation"
+msgstr ""
+
+#: includes/promptcache/class-promptcache-admin.php:80
+msgid "Per-model breakdown: wp mxchat-plus promptcache stats --by-model"
+msgstr ""
+
+#: includes/promptcache/class-promptcache-admin.php:105
+msgid "Requests"
+msgstr ""
+
+#: includes/promptcache/class-promptcache-admin.php:106
+msgid "Tokens read from cache"
+msgstr ""
+
+#: includes/promptcache/class-promptcache-admin.php:107
+msgid "Uncached input tokens"
+msgstr ""
+
+#: includes/promptcache/class-promptcache-cli.php:50
+msgid "No cumulative statistics recorded."
+msgstr ""
+
+#: includes/promptcache/class-promptcache-cli.php:52
+msgid "Cumulative (since installation)"
+msgstr ""
+
+#: includes/promptcache/class-promptcache-cli.php:54
+msgid "Per-model breakdown (cumulative)"
+msgstr ""
+
+#: includes/promptcache/class-promptcache-cli.php:61
+msgid "No requests in the last 24 hours."
+msgstr ""
+
+#: includes/promptcache/class-promptcache-cli.php:67
+msgid "Last 24 hours (sliding)"
+msgstr ""
+
+#: includes/promptcache/class-promptcache-cli.php:70
+msgid "Per-model breakdown (24 hours)"
+msgstr ""
+
+#: includes/promptcache/class-promptcache-cli.php:89
+msgid "Statistics (24 hours and cumulative) and debug data reset."
+msgstr ""
+
+#: includes/promptcache/class-promptcache-cli.php:93
+msgid "24-hour statistics and debug data reset (cumulative kept)."
+msgstr ""
+
+#: includes/promptcache/class-promptcache-cli.php:101
+msgid "No debug data (transient expired or no recent request)."
+msgstr ""
+
+#: includes/promptcache/class-promptcache-cli.php:104
+msgid "yes"
+msgstr ""
+
+#: includes/promptcache/class-promptcache-cli.php:105
+msgid "no"
+msgstr ""
+
+#: includes/promptcache/class-promptcache-cli.php:117
+#, php-format
+msgid ""
+"Last request       : %1$s\n"
+"Model (request)    : %2$s\n"
+"Model (response)   : %3$s\n"
+"Min size (chars)   : %4$d\n"
+"Payload shape      : %5$s\n"
+"Volatile system    : %6$s\n"
+"TTLs lengthened    : %7$d\n"
+"Tool inputs fixed  : %8$d\n"
+"Breakpoints added  :\n"
+"  - tools          : %9$s\n"
+"  - system         : %10$s\n"
+"  - prev_user      : %11$s\n"
+"  - last_user      : %12$s\n"
+"  - context_block  : %13$s\n"
+"Usage (tokens):\n"
+"  - input                 : %14$d\n"
+"  - cache_creation_input  : %15$d\n"
+"  - cache_read_input      : %16$d"
+msgstr ""
+
+#: includes/promptcache/class-promptcache-cli.php:159
+msgid "knowledge-base block in the system prompt ({context})"
+msgstr ""
+
+#: includes/promptcache/class-promptcache-cli.php:160
+msgid "{current_datetime} placeholder, changes every minute"
+msgstr ""
+
+#: includes/promptcache/class-promptcache-cli.php:161
+msgid "set by the mxchat_plus_promptcache_volatile_system filter"
+msgstr ""
+
+#. translators: %d: number of requests.
+#: includes/promptcache/class-promptcache-cli.php:189
+#, php-format
+msgid "  Requests                : %d"
+msgstr ""
+
+#. translators: %d: number of tokens.
+#: includes/promptcache/class-promptcache-cli.php:191
+#, php-format
+msgid "  Tokens read from cache  : %d"
+msgstr ""
+
+#. translators: %d: number of tokens.
+#: includes/promptcache/class-promptcache-cli.php:193
+#, php-format
+msgid "  Tokens written to cache : %d"
+msgstr ""
+
+#. translators: %d: number of tokens.
+#: includes/promptcache/class-promptcache-cli.php:195
+#, php-format
+msgid "  Uncached input tokens   : %d"
+msgstr ""
+
+#. translators: %.1f: percentage.
+#: includes/promptcache/class-promptcache-cli.php:197
+#, php-format
+msgid "  Cache hit rate          : %.1f %%"
+msgstr ""
+
+#. translators: %s: date and time.
+#: includes/promptcache/class-promptcache-cli.php:202
+#, php-format
+msgid "  Since                   : %s"
+msgstr ""
+
+#: includes/promptcache/class-promptcache-models.php:1023
+msgid ""
+"  ⚠ Cache writes exceed cache reads: the prompt prefix is probably unstable "
+"(per-request data in the system prompt, such as the {current_datetime} "
+"placeholder, a shortcode or a filter; history rewritten between turns) or "
+"traffic is too low to pay back the cache. See \"Cache writes > reads\" in "
+"docs/promptcache/USAGE.md."
+msgstr ""
+
+#. translators: 1: lowest valid dimension id, 2: highest valid dimension id
+#: includes/tracking/class-tracking-options.php:117
+#, php-format
+msgid ""
+"The Matomo custom dimension ID must be a number between %1$d and %2$d. The "
+"value entered was ignored, and no custom dimension will be sent."
+msgstr ""
+
+#: includes/tracking/class-tracking-report.php:252
+msgid "You do not have sufficient permissions to export link clicks."
+msgstr ""
+
+#: includes/tracking/class-tracking-report.php:258
+msgid ""
+"MxChat has never recorded a link click on this site: its click table does "
+"not exist."
+msgstr ""
+
+#: includes/tracking/class-tracking-report.php:271
+msgid "No link clicks found for that period."
+msgstr ""
+
+#: includes/tracking/class-tracking-report.php:280
+#: includes/transcripts/class-transcripts-export.php:186
+msgid "Could not open the output stream for the export."
+msgstr ""
+
+#: includes/tracking/class-tracking-report.php:318
+msgid "Last click (UTC)"
+msgstr ""
+
+#: includes/transcripts/class-transcripts-export.php:109
+msgid "Export as CSV (selection, or by date range)"
+msgstr ""
+
+#: includes/transcripts/class-transcripts-export.php:110
+msgid "Export by date range"
+msgstr ""
+
+#: includes/transcripts/class-transcripts-export.php:111
+msgid ""
+"No conversation is selected. Choose a period — every conversation between "
+"these two dates will be exported."
+msgstr ""
+
+#: includes/transcripts/class-transcripts-export.php:112
+msgid "Start date"
+msgstr ""
+
+#: includes/transcripts/class-transcripts-export.php:113
+msgid "End date"
+msgstr ""
+
+#: includes/transcripts/class-transcripts-export.php:114
+msgid "Please provide both a start and an end date."
+msgstr ""
+
+#: includes/transcripts/class-transcripts-export.php:115
+msgid "The start date must be before the end date."
+msgstr ""
+
+#: includes/transcripts/class-transcripts-export.php:116
+msgid "Cancel"
+msgstr ""
+
+#: includes/transcripts/class-transcripts-export.php:118
+msgid "Export this conversation (CSV)"
+msgstr ""
+
+#. translators: 1: number of conversations MxChat's toolbar shows as selected, 2: number of conversations this export will contain.
+#: includes/transcripts/class-transcripts-export.php:120
+#, php-format
+msgid ""
+"MxChat shows %1$d selected conversations, but this export will contain %2$d. "
+"Export anyway?"
+msgstr ""
+
+#. translators: %d: number of conversations MxChat's toolbar shows as selected.
+#: includes/transcripts/class-transcripts-export.php:122
+#, php-format
+msgid ""
+"MxChat shows %d selected conversations, but this export lost track of them. "
+"To export them, reload the page and select them again. Export by date range "
+"instead?"
+msgstr ""
+
+#. translators: 1: maximum number of conversations in one export, 2: number of conversations selected.
+#: includes/transcripts/class-transcripts-export.php:124
+#, php-format
+msgid ""
+"Only the first %1$d of the %2$d selected conversations will be exported. "
+"Continue?"
+msgstr ""
+
+#: includes/transcripts/class-transcripts-export.php:135
+msgid "You do not have sufficient permissions to export transcripts."
+msgstr ""
+
+#: includes/transcripts/class-transcripts-export.php:151
+msgid "No messages found for the selected conversations."
+msgstr ""
+
+#: includes/transcripts/class-transcripts-export.php:163
+msgid ""
+"Select at least one conversation, or provide a valid start and end date."
+msgstr ""
+
+#: includes/transcripts/class-transcripts-export.php:171
+msgid "No conversations found in that date range."
+msgstr ""
+
+#: includes/transcripts/class-transcripts-export.php:309
+msgid "Session ID"
+msgstr ""
+
+#: includes/transcripts/class-transcripts-export.php:310
+msgid "Email"
+msgstr ""
+
+#: includes/transcripts/class-transcripts-export.php:311
+msgid "User identifier"
+msgstr ""
+
+#: includes/transcripts/class-transcripts-export.php:312
+msgid "Role"
+msgstr ""
+
+#: includes/transcripts/class-transcripts-export.php:313
+msgid "Message"
+msgstr ""
+
+#: includes/transcripts/class-transcripts-export.php:314
+msgid "Timestamp (UTC)"
+msgstr ""
+
+#: includes/transcripts/class-transcripts-export.php:315
+msgid "Name"
+msgstr ""
+
+#: includes/transcripts/class-transcripts-export.php:316
+msgid "Originating page"
 msgstr ""

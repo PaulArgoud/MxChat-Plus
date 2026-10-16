@@ -178,9 +178,11 @@ final class PreVectorQueryTest extends TestCase {
         $this->assertSame('default', $out['mxchat_pinecone_namespace']);
         // API key is the per-namespace proxy token, not empty.
         $this->assertNotEmpty($out['mxchat_pinecone_api_key']);
-        // Environment + index are kept empty to match mxchat's shape.
-        $this->assertSame('', $out['mxchat_pinecone_environment']);
-        $this->assertSame('', $out['mxchat_pinecone_index']);
+        // The proxy speaks the classic vector protocol only.
+        $this->assertSame('vector', $out['mxchat_pinecone_index_type']);
+        // No stored row: nothing else to carry, Top K from our own setting.
+        $this->assertSame('50', $out['mxchat_pinecone_top_k']);
+        // The rest of the stored row is carried (see SearchAdapterTakeoverTest).
     }
 
     // ─── Error path ───────────────────────────────────────────────────────

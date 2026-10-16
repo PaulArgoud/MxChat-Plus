@@ -2,7 +2,8 @@
 /**
  * WordPress object stubs: WP_Post, WP_Query, WP_REST_Request,
  * WP_REST_Response, WP_Error + get_post / get_permalink / is_wp_error
- * (which sit closer to the object surface than the function shims).
+ * (which sit closer to the object surface than the function shims), and a
+ * WP_Scripts stand-in behind wp_scripts().
  *
  * WP_Query is driven by $GLOBALS['__test_wp_query_matcher'] — a closure
  * that takes the args dict and returns ['posts' => …, 'found_posts' => …].
@@ -13,6 +14,7 @@ if (!class_exists('WP_Post', false)) {
         public int $ID = 0;
         public string $post_title = '';
         public string $post_content = '';
+        public string $post_excerpt = '';
         public string $post_type = 'post';
         public string $post_status = 'publish';
         public function __construct(array $props = []) {
@@ -108,6 +110,23 @@ if (!class_exists('WP_REST_Request', false)) {
         public function get_query_params(): array {
             return $this->query;
         }
+
+        // Method + matched route, as core exposes them (the Pinecone proxy's
+        // loopback signature is bound to both). Defaults: GET, no route.
+        private string $method = 'GET';
+        private string $route = '';
+        public function set_method(string $method): void {
+            $this->method = strtoupper($method);
+        }
+        public function get_method(): string {
+            return $this->method;
+        }
+        public function set_route(string $route): void {
+            $this->route = $route;
+        }
+        public function get_route(): string {
+            return $this->route;
+        }
     }
 }
 
@@ -130,5 +149,34 @@ if (!function_exists('register_rest_route')) {
         }
         $GLOBALS['__test_rest_routes'][$key] = $args;
         return true;
+    }
+}
+
+// Script queue printer: wp_scripts() and the one WP_Scripts method the
+// tracking module calls. do_items() records into
+// $GLOBALS['__test_scripts']['printed'], the list wp_print_scripts() in
+// wp-functions.php fills too, since in core that function ends by calling it.
+if (!class_exists('WP_Scripts', false)) {
+    class WP_Scripts {
+        /**
+         * @param string|string[]|false $handles
+         * @param int|false             $group
+         * @return string[]
+         */
+        public function do_items($handles = false, $group = false) {
+            $handles = $handles === false ? [] : (array) $handles;
+            foreach ($handles as $handle) {
+                $GLOBALS['__test_scripts']['printed'][] = $handle;
+            }
+            return $handles;
+        }
+    }
+}
+if (!function_exists('wp_scripts')) {
+    function wp_scripts() {
+        if (!(($GLOBALS['wp_scripts'] ?? null) instanceof WP_Scripts)) {
+            $GLOBALS['wp_scripts'] = new WP_Scripts();
+        }
+        return $GLOBALS['wp_scripts'];
     }
 }

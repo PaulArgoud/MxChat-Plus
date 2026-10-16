@@ -9,9 +9,17 @@
  *     remote `md_remote.mxchat_vectors`.
  *   - Schema is ensured on the local side first so the INSERT-SELECT
  *     has a target table with the same shape (FLOAT[N] / HNSW / etc.).
- *   - Batches via vector_id cursor: WHERE vector_id > <last_seen>
- *     ORDER BY vector_id LIMIT BATCH_SIZE. Stable + resumable; doesn't
- *     suffer OFFSET-on-large-table degeneracy.
+ *   - Columns are copied BY NAME through an explicit list
+ *     (Vector_Store_Schema::copy_rows_sql()), never `SELECT *`: the two
+ *     sides need not have the same columns (a primary not yet migrated to
+ *     schema v4, a local table that is), and a positional copy would fail
+ *     or shift values.
+ *   - Batches via a keyset cursor on (vector_id, bot_id): WHERE
+ *     (vector_id, bot_id) > (<last id>, <last bot>) ORDER BY vector_id,
+ *     bot_id LIMIT BATCH_SIZE. Schema v4 keys rows on (bot_id, vector_id),
+ *     so the same md5(url) id exists once per bot and a cursor on
+ *     vector_id alone would skip the other bots' copies at a batch
+ *     boundary. Stable + resumable; no OFFSET-on-large-table degeneracy.
  *   - INSERT OR REPLACE is idempotent on resume so a half-applied
  *     batch after a crash doesn't leave dangling state.
  *
@@ -128,6 +136,7 @@ class MxChat_Plus_DuckDB_Mirror_Bootstrap {
             'target_count'    => null,           // probed on first tick
             'processed_count' => 0,
             'last_vector_id'  => '',             // empty cursor → starts from the beginning
+            'last_bot_id'     => '',
             'last_error'      => '',
             'completed_at'    => null,
         ], false);
@@ -180,44 +189,53 @@ class MxChat_Plus_DuckDB_Mirror_Bootstrap {
                 }
             }
 
-            // One batch: INSERT the next chunk of remote rows whose
-            // vector_id is strictly greater than the last cursor.
+            // One batch: INSERT the next chunk of remote rows after the
+            // (vector_id, bot_id) cursor, columns matched by name.
             $batch_size = (int) apply_filters('mxchat_plus_duckdb_mirror_bootstrap_batch_size', self::BATCH_SIZE);
             $batch_size = max(1, min(10000, $batch_size));
-            $table_q = $this->quote_ident($this->table);
-            $insert_sql = sprintf(
-                'INSERT OR REPLACE INTO %1$s
-                 SELECT * FROM md_remote.%1$s
-                 WHERE vector_id > ?
-                 ORDER BY vector_id
+            $table_q  = $this->quote_ident($this->table);
+            $remote_q = 'md_remote.' . $table_q;
+            $schema   = $this->local_schema($conn, $opts);
+            $columns  = $this->remote_columns($schema);
+            $bot_sql  = MxChat_Plus_DuckDB_Vector_Store_Schema::source_bot_sql($columns);
+            $tail = sprintf(
+                'WHERE vector_id > ? OR (vector_id = ? AND %1$s > ?)
+                 ORDER BY vector_id, %1$s
                  LIMIT %2$d',
-                $table_q,
+                $bot_sql,
                 $batch_size
             );
-            $conn->execute($insert_sql, [(string) ($state['last_vector_id'] ?? '')]);
+            $last_id  = (string) ($state['last_vector_id'] ?? '');
+            $last_bot = (string) ($state['last_bot_id'] ?? '');
+            $cursor_params = [$last_id, $last_id, $last_bot];
+            $conn->execute($schema->copy_rows_sql('INSERT OR REPLACE', $remote_q, $columns, $tail), $cursor_params);
 
-            // Advance the cursor to the last vector_id of this batch.
-            // We re-query the source so we don't have to read back our
-            // own write (which would also work but feels backwards).
+            // Advance the cursor to the last (vector_id, bot_id) of this
+            // batch. We re-query the source so we don't have to read back
+            // our own write (which would also work but feels backwards).
             $cursor_sql = sprintf(
-                'SELECT vector_id FROM md_remote.%s
-                 WHERE vector_id > ?
-                 ORDER BY vector_id
-                 LIMIT %d',
-                $table_q,
-                $batch_size
+                'SELECT vector_id, %1$s AS bot_id FROM %2$s %3$s',
+                $bot_sql,
+                $remote_q,
+                $tail
             );
-            $batch_rows = $conn->execute($cursor_sql, [(string) ($state['last_vector_id'] ?? '')]);
+            $batch_rows = $conn->execute($cursor_sql, $cursor_params);
             if (!empty($batch_rows)) {
-                $state['last_vector_id'] = (string) end($batch_rows)['vector_id'];
+                $last = end($batch_rows);
+                $state['last_vector_id'] = (string) ($last['vector_id'] ?? '');
+                $state['last_bot_id']    = (string) ($last['bot_id'] ?? 'default');
             }
             $state['processed_count'] = (int) $state['processed_count'] + count($batch_rows);
 
             // Done check uses local COUNT(*) — authoritative on this
-            // side, robust against transient remote miscounts.
+            // side, robust against transient remote miscounts. An empty
+            // batch also ends the run: the cursor is past the last remote
+            // row, and a primary that shrank since the first tick (the
+            // host deleting entries meanwhile) would otherwise never reach
+            // the stale target and re-enqueue forever.
             $local_rows = $conn->execute(sprintf('SELECT COUNT(*) AS c FROM %s', $table_q));
             $local_count = (int) ($local_rows[0]['c'] ?? 0);
-            $done = $local_count >= (int) $state['target_count'];
+            $done = $local_count >= (int) $state['target_count'] || empty($batch_rows);
 
             if ($done) {
                 $state['completed_at'] = time();
@@ -262,7 +280,8 @@ class MxChat_Plus_DuckDB_Mirror_Bootstrap {
     /**
      * @return array{
      *   started_at:int, target_count:?int, processed_count:int,
-     *   last_vector_id:string, last_error:string, completed_at:?int
+     *   last_vector_id:string, last_bot_id:string, last_error:string,
+     *   completed_at:?int
      * }
      */
     public static function get_state(): array {
@@ -272,6 +291,7 @@ class MxChat_Plus_DuckDB_Mirror_Bootstrap {
             'target_count'    => null,
             'processed_count' => 0,
             'last_vector_id'  => '',
+            'last_bot_id'     => '',
             'last_error'      => '',
             'completed_at'    => null,
         ];
@@ -343,12 +363,40 @@ class MxChat_Plus_DuckDB_Mirror_Bootstrap {
      * double-apply on primary.
      */
     protected function ensure_local_schema(MxChat_Plus_DuckDB_Connection $conn, array $opts): void {
+        $this->local_schema($conn, $opts)->ensure_schema();
+    }
+
+    /**
+     * Schema helper bound to the local side (the copy SQL builder lives there).
+     *
+     * @param array<string, mixed> $opts
+     */
+    protected function local_schema(MxChat_Plus_DuckDB_Connection $conn, array $opts): MxChat_Plus_DuckDB_Vector_Store_Schema {
         $metric  = (string) ($opts['distance_metric'] ?? 'cosine');
         $hnsw    = !empty($opts['hnsw_enabled']);
-        $schema  = new MxChat_Plus_DuckDB_Vector_Store_Schema(
+        return new MxChat_Plus_DuckDB_Vector_Store_Schema(
             $conn, $this->table, $this->dim, $metric, $hnsw, $this->storage
         );
-        $schema->ensure_schema();
+    }
+
+    /**
+     * Column names of the remote (primary) table, lower-cased. Falls back to
+     * the columns every schema version has had when the backend cannot
+     * introspect the attached table.
+     *
+     * @return list<string>
+     * @throws RuntimeException when the remote table does not exist.
+     */
+    private function remote_columns(MxChat_Plus_DuckDB_Vector_Store_Schema $schema): array {
+        $cols = $schema->table_columns('md_remote.' . $this->table);
+        if ($cols === null) {
+            throw new RuntimeException(sprintf('Mirror bootstrap: the primary table md_remote.%s does not exist.', $this->table));
+        }
+        if ($cols === []) {
+            return ['vector_id', 'bot_id', 'embedding', 'content', 'source_url', 'role_restriction',
+                    'content_type', 'chunk_index', 'total_chunks', 'is_chunked', 'created_at'];
+        }
+        return array_keys($cols);
     }
 
     private function resolve_opts(): array {

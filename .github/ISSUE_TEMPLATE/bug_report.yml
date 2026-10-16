@@ -17,7 +17,9 @@ body:
       options:
         - DuckDB / MotherDuck vector store
         - Prompt caching
-        - Both / don't know
+        - Transcripts CSV export
+        - Click tracking
+        - Several / don't know
     validations:
       required: true
 
@@ -47,10 +49,11 @@ body:
     id: streaming
     attributes:
       label: Is MxChat streaming enabled? (prompt-cache module only)
-      description: Prompt caching cannot act while streaming is ON — the host bypasses the WordPress HTTP API. See the README.
+      description: With streaming ON the host bypasses the WordPress HTTP API, so prompt caching only reaches the turns MxChat answers through its AI Tools loop (MxChat 3.2.22+, a claude-* model, at least one AI Tool enabled). See the README.
       options:
-        - "Streaming OFF (required for prompt caching)"
-        - "Streaming ON"
+        - "Streaming OFF"
+        - "Streaming ON, AI Tools off"
+        - "Streaming ON, AI Tools active"
         - Don't know / N/A
     validations:
       required: true
@@ -60,7 +63,7 @@ body:
     attributes:
       label: Environment
       description: PHP version + WordPress version + mxchat-basic version.
-      placeholder: "PHP 8.2 / WP 6.6 / mxchat-basic 3.2.21"
+      placeholder: "PHP 8.2 / WP 6.6 / mxchat-basic 3.2.25"
     validations:
       required: true
 

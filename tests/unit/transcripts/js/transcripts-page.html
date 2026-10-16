@@ -1,0 +1,102 @@
+<!doctype html>
+<!--
+  The parts of MxChat's transcripts screen that the host script and
+  assets/js/admin-transcripts-export.js touch, with the host's ids, classes
+  and nesting (includes/admin-transcripts-page.php, MxChat 3.2.25). Icons,
+  translation controls and the Leads tab are left out.
+-->
+<html>
+<body>
+<div id="all-chats" class="mxch-section active">
+  <div class="mxch-split-panel">
+    <div class="mxch-chat-list-panel">
+      <div class="mxch-bulk-toolbar">
+        <label class="mxch-bulk-select-all">
+          <input type="checkbox" id="mxch-select-all">
+          <span>All</span>
+        </label>
+        <span class="mxch-selected-count" id="mxch-selected-count">0</span>
+        <div class="mxch-bulk-actions">
+          <button type="button" class="mxch-bulk-btn" id="mxch-sort-btn" title="Sort"><span>Sort</span></button>
+          <button type="button" class="mxch-bulk-btn mxch-bulk-delete" id="mxch-delete-selected" disabled title="Delete Selected"></button>
+        </div>
+      </div>
+      <div class="mxch-panel-header">
+        <div class="mxch-search-wrapper">
+          <input type="text" id="mxch-search-transcripts" class="mxch-search-input">
+        </div>
+        <div class="mxch-panel-title-row">
+          <span class="mxch-panel-count" id="mxch-chat-count">0 / 0 chats</span>
+          <div class="mxch-panel-actions">
+            <button type="button" id="mxch-refresh-list" class="mxch-icon-btn" title="Refresh"></button>
+          </div>
+        </div>
+      </div>
+      <div class="mxch-chat-list" id="mxch-chat-list"></div>
+      <div class="mxch-panel-footer">
+        <div class="mxch-pagination-simple" id="mxch-pagination"></div>
+      </div>
+    </div>
+
+    <div class="mxch-conversation-panel" id="mxch-conversation-panel">
+      <div class="mxch-conversation-empty" id="mxch-conversation-empty">
+        <h3>Select a conversation</h3>
+      </div>
+      <div class="mxch-conversation-content" id="mxch-conversation-content" style="display: none;">
+        <div class="mxch-conversation-header">
+          <button type="button" class="mxch-mobile-back-btn" id="mxch-transcript-back-btn" style="display: none;" title="Back to list"></button>
+          <div class="mxch-user-avatar" id="mxch-user-avatar"><span>MX</span></div>
+          <div class="mxch-user-info">
+            <div class="mxch-user-name" id="mxch-user-name">User Name</div>
+            <div class="mxch-user-meta" id="mxch-user-meta">User ID: 123</div>
+          </div>
+          <button type="button" class="mxch-details-toggle" id="mxch-toggle-details" title="Show details"></button>
+        </div>
+        <div class="mxch-details-drawer" id="mxch-details-drawer" style="display: none;">
+          <div class="mxch-details-section">
+            <span class="mxch-detail-value" id="mxch-detail-messages">0</span>
+            <span class="mxch-detail-value" id="mxch-detail-started">-</span>
+            <span class="mxch-detail-value" id="mxch-detail-page">-</span>
+            <div class="mxch-detail-row" id="mxch-detail-email-row" style="display: none;">
+              <span class="mxch-detail-value" id="mxch-detail-email">-</span>
+            </div>
+            <div class="mxch-detail-row" id="mxch-detail-feedback-row" style="display: none;">
+              <span class="mxch-detail-value mxch-detail-feedback-value" id="mxch-detail-feedback">-</span>
+            </div>
+          </div>
+          <div class="mxch-details-section" id="mxch-clicked-section" style="display: none;">
+            <div class="mxch-clicked-links" id="mxch-clicked-links"></div>
+          </div>
+          <div class="mxch-details-actions">
+            <button type="button" id="mxch-delete-current" class="mxch-btn mxch-btn-danger mxch-btn-sm">Delete Chat</button>
+            <button type="button" id="mxch-export-current" class="mxch-btn mxch-btn-secondary mxch-btn-sm">Export</button>
+          </div>
+        </div>
+        <div class="mxch-messages-area" id="mxch-messages-area"></div>
+      </div>
+    </div>
+  </div>
+
+  <input type="hidden" id="mxchat_delete_chat_nonce" name="mxchat_delete_chat_nonce" value="host-delete-nonce">
+
+  <div id="mxch-transcript-confirm" class="mxch-modal-overlay" style="display:none;">
+    <div class="mxch-modal-content mxch-leads-confirm-box">
+      <div class="mxch-modal-header">
+        <h2 id="mxch-transcript-confirm-title">Delete conversation?</h2>
+        <button type="button" class="mxch-modal-close" data-mxch-transcript-close>&times;</button>
+      </div>
+      <div class="mxch-modal-body">
+        <p id="mxch-transcript-confirm-body"></p>
+        <label class="mxch-transcript-confirm-check">
+          <input type="checkbox" id="mxch-transcript-also-delete-lead">
+        </label>
+      </div>
+      <div class="mxch-leads-confirm-actions">
+        <button type="button" class="mxch-btn mxch-btn-secondary" data-mxch-transcript-close>Cancel</button>
+        <button type="button" class="mxch-btn mxch-btn-danger" id="mxch-transcript-confirm-go">Delete</button>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

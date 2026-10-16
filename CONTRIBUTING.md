@@ -39,11 +39,12 @@ CI fails the build if a legacy `mxchat-duckdb` / `mxchat-promptcache` text domai
 Use the [issue templates](.github/ISSUE_TEMPLATE). Include:
 
 1. **Plugin version**, **WordPress version**, **PHP version**, **mxchat-basic version**.
-2. **Which module** — vector store, prompt cache, or both.
+2. **Which module** — vector store, prompt cache, transcripts export or click tracking.
 3. For the vector store: the backend (MotherDuck / embedded) and whether the PECL `duckdb`
    extension is loaded or the CLI fallback is in use.
-4. For the prompt cache: **whether MxChat streaming is on**. It is the cause of most
-   "nothing is cached" reports — see the README.
+4. For the prompt cache: **whether MxChat streaming is on**, and whether MxChat's AI Tools
+   are active. Streaming without AI Tools is the cause of most "nothing is cached" reports
+   — see the README.
 5. **What you did**, **what you expected**, and **the last error** (admin page or
    `wp-content/debug.log` with `WP_DEBUG_LOG` on).
 6. A `wp mxchat-plus duckdb stats` / `wp mxchat-plus promptcache stats` dump — it captures
@@ -68,8 +69,9 @@ instead of a public issue. See [SECURITY.md](SECURITY.md).
    frozen — never edit them.
 6. New hook (filter / action / cron / REST route)? Document it in the module's docs page
    and add a one-line `@since` comment in the code.
-7. New unit tests go under `tests/unit/duckdb/` or `tests/unit/promptcache/` so they land
-   in the right PHPUnit suite.
+7. New unit tests go under `tests/unit/duckdb/`, `tests/unit/promptcache/`,
+   `tests/unit/transcripts/` or `tests/unit/tracking/` so they land in the right PHPUnit
+   suite.
 
 ## Running the checks
 
@@ -80,16 +82,19 @@ configuration at level 7 with a baseline, and a five-job GitHub Actions workflow
 ```bash
 composer install          # dev dependencies only; there are no runtime deps
 composer lint             # php -l over the tree
-composer test             # PHPUnit, both suites
+composer test             # PHPUnit, all four suites
 composer stan             # PHPStan level 7
 
 vendor/bin/phpunit --testsuite duckdb        # one module at a time
 vendor/bin/phpunit --testsuite promptcache
+vendor/bin/phpunit --testsuite transcripts
+vendor/bin/phpunit --testsuite tracking
 ```
 
 Composer is **development-only**. `composer.json` deliberately declares no runtime
-`autoload` section: the plugin boots through its own `require_once` chain and the release
-zip ships no `vendor/` directory. Do not add a classmap over `includes/`.
+`autoload` section: the plugin boots through its own static classmap
+(`includes/core/class-mxchat-plus-autoloader.php` — add every new class there) and the
+release zip ships no `vendor/` directory. Do not add a Composer autoload over `includes/`.
 
 A full functional test still needs a real WordPress install with `mxchat-basic` — the unit
 suite runs against shims in `tests/shims/`, not against WordPress.
@@ -110,9 +115,30 @@ msgmerge --update --no-wrap --backup=none languages/mxchat-plus-fr_FR.po languag
 msgfmt --check --statistics languages/mxchat-plus-fr_FR.po -o languages/mxchat-plus-fr_FR.mo
 ```
 
-Without wp-cli, `xgettext --language=PHP` with the WordPress keyword list
-(`__:1`, `_e:1`, `esc_html__:1`, `esc_html_e:1`, `esc_attr__:1`, `esc_attr_e:1`, `_x:1,2c`,
-`_n:1,2`, …) over `includes/` + `admin/` + the root PHP files produces the same template.
+Without wp-cli, `xgettext` over `includes/` + `admin/` + the root PHP files produces the
+same msgids. Keep the keywords in an **array**, as below: zsh does not word-split a plain
+string variable, and xgettext then silently writes nothing.
+
+```bash
+KW=(--keyword=__ --keyword=_e --keyword=_x:1,2c --keyword=_ex:1,2c --keyword=_n:1,2
+    --keyword=_nx:1,2,4c --keyword=_n_noop:1,2 --keyword=_nx_noop:1,2,3c
+    --keyword=esc_html__ --keyword=esc_html_e --keyword=esc_html_x:1,2c
+    --keyword=esc_attr__ --keyword=esc_attr_e --keyword=esc_attr_x:1,2c)
+{ find includes admin -name '*.php' | LC_ALL=C sort; ls *.php; } > /tmp/mxp-files.txt
+xgettext --language=PHP --from-code=UTF-8 "${KW[@]}" --add-comments=translators: \
+    --package-name="MxChat Plus" --package-version=1.0.0 --copyright-holder="Paul Argoud" \
+    --msgid-bugs-address="https://github.com/PaulArgoud/mxchat-plus/issues" \
+    --files-from=/tmp/mxp-files.txt -o languages/mxchat-plus.pot
+```
+
+Then add the `"X-Domain: mxchat-plus\n"` header line after `Content-Transfer-Encoding`, and
+compare the msgid set with the previous template: every msgid that disappears should be one
+you changed or removed on purpose.
+
+`msgmerge` only adds the template's new msgids and marks changed ones **fuzzy**; `msgfmt`
+leaves fuzzy entries out of the `.mo`. Translate every new entry and remove each `fuzzy`
+flag before compiling — `msgfmt --statistics` must report no untranslated and no fuzzy
+message.
 
 **Never commit a `.po` without recompiling the `.mo`.** The plugin ships as a zip and end
 users never run `msgfmt`; a stale `.mo` means the French UI silently falls back to English
@@ -142,11 +168,15 @@ For the prompt cache:
 
 ## Where the docs live
 
-- [README.md](README.md) — onboarding, the two modules, and the operational prerequisites.
+- [README.md](README.md) — onboarding, the four modules, and the operational prerequisites.
+- [ARCHITECTURE.md](ARCHITECTURE.md) — boot sequence and the host's real integration surface
+  (MxChat 3.2.25), which hooks exist and which do not.
 - [docs/duckdb/](docs/duckdb/) — architecture, configuration, hooks, CLI, usage, mirror,
   backup.
 - [docs/promptcache/USAGE.md](docs/promptcache/USAGE.md) — breakpoints, thresholds,
   filters, CLI.
+- [docs/transcripts/USAGE.md](docs/transcripts/USAGE.md) and
+  [docs/tracking/USAGE.md](docs/tracking/USAGE.md) — the other two modules.
 - [tools/patches/README.md](tools/patches/README.md) — the optional upstream patch.
 - [CHANGELOG.md](CHANGELOG.md) — one `## [Unreleased]` entry per user-visible change.
 

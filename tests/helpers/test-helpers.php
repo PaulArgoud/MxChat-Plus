@@ -97,8 +97,9 @@ if (!class_exists('MxChat_Test_RecordingConnection')) {
      * The constructor takes an optional identifier so tests with multiple
      * connections can distinguish them in failure messages.
      *
-     * Schema-meta SELECTs are short-circuited to return v3 so
-     * ensure_schema() doesn't run any migrations against the mock. Tests
+     * Schema-meta SELECTs are short-circuited to return the current
+     * Vector_Store_Schema::TARGET_SCHEMA_VERSION so ensure_schema() doesn't
+     * run any migrations against the mock. Tests
      * that want to exercise the migration runner should override this by
      * setting a 'schema_meta' response themselves OR by passing
      * skip_schema_meta_shortcircuit=true to the constructor.
@@ -127,7 +128,7 @@ if (!class_exists('MxChat_Test_RecordingConnection')) {
             if (!isset($this->responses['schema_meta'])
                 && stripos($sql, 'schema_meta') !== false
                 && stripos($sql, 'SELECT value') !== false) {
-                return [['value' => '3']];
+                return [['value' => (string) MxChat_Plus_DuckDB_Vector_Store_Schema::TARGET_SCHEMA_VERSION]];
             }
 
             foreach ($this->responses as $pattern => $value) {

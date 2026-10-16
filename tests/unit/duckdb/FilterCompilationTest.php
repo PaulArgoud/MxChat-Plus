@@ -5,7 +5,14 @@ use PHPUnit\Framework\TestCase;
 /**
  * Locks the Pinecone-style filter compiler. Each op should produce a
  * predictable SQL fragment with `?` placeholders + an aligned params
- * array; unknown ops/fields are silently dropped.
+ * array.
+ *
+ * 1.0.0 (#69): `$and` / `$or` nest, `{"field": scalar}` means `$eq`, and
+ * `$exists` is supported. A positive clause on a field we do not store fails
+ * CLOSED (`FALSE`) — Pinecone filters on any metadata key and records
+ * without it fail the clause — where it used to be dropped, which WIDENED
+ * the result set. An unsupported operator or a malformed filter throws
+ * InvalidArgumentException (Pinecone answers HTTP 400).
  *
  * v0.8.1: filter values moved from inlined literals to bound parameters
  * so the connection's prepared-statement path can take over on the
@@ -79,9 +86,15 @@ final class FilterCompilationTest extends TestCase {
         $this->assertSame(['private'], $params);
     }
 
-    public function test_in_with_empty_array_is_dropped(): void {
+    public function test_in_with_empty_array_matches_nothing(): void {
+        // Nothing is in the empty set; dropping the clause matched everything.
         $store = $this->makeQuery();
-        $this->assertSame([[], []], $this->compile($store, ['type' => ['$in' => []]]));
+        $this->assertSame([['FALSE'], []], $this->compile($store, ['type' => ['$in' => []]]));
+    }
+
+    public function test_nin_with_empty_array_adds_no_constraint(): void {
+        $store = $this->makeQuery();
+        $this->assertSame([[], []], $this->compile($store, ['type' => ['$nin' => []]]));
     }
 
     public function test_range_operators_on_chunk_index(): void {
@@ -93,14 +106,129 @@ final class FilterCompilationTest extends TestCase {
         $this->assertSame([0, 10], $params);
     }
 
-    public function test_unknown_field_is_silently_dropped(): void {
+    public function test_positive_clause_on_an_unknown_field_fails_closed(): void {
+        // An add-on restricting retrieval to `product_line = x` must get no
+        // rows rather than the unfiltered top-K.
         $store = $this->makeQuery();
-        $this->assertSame([[], []], $this->compile($store, ['some_random_field' => ['$eq' => 'x']]));
+        $this->assertSame([['FALSE'], []], $this->compile($store, ['some_random_field' => ['$eq' => 'x']]));
+        $this->assertSame([['FALSE'], []], $this->compile($store, ['some_random_field' => ['$in' => ['x']]]));
+        $this->assertSame([['FALSE'], []], $this->compile($store, ['some_random_field' => ['$exists' => true]]));
     }
 
-    public function test_unknown_operator_is_silently_dropped(): void {
+    public function test_negative_clause_on_an_unknown_field_holds_for_every_row(): void {
+        // No stored row carries the field, so `!= x` / `not in` / `not
+        // exists` are true for all of them: no constraint.
         $store = $this->makeQuery();
-        $this->assertSame([[], []], $this->compile($store, ['type' => ['$unknown' => 'x']]));
+        $this->assertSame([[], []], $this->compile($store, ['some_random_field' => ['$ne' => 'x']]));
+        $this->assertSame([[], []], $this->compile($store, ['some_random_field' => ['$nin' => ['x']]]));
+        $this->assertSame([[], []], $this->compile($store, ['some_random_field' => ['$exists' => false]]));
+    }
+
+    public function test_unknown_field_is_counted(): void {
+        $GLOBALS['__test_options'] = [];
+        MxChat_Plus_DuckDB_Metrics::reset();
+        $this->compile($this->makeQuery(), ['nope' => ['$eq' => 'x']]);
+        MxChat_Plus_DuckDB_Metrics::flush();
+        $data = get_option(MxChat_Plus_DuckDB_Metrics::OPTION_KEY, []);
+        $this->assertSame(1, (int) ($data['counters']['filter_unknown_field'] ?? 0));
+        MxChat_Plus_DuckDB_Metrics::reset();
+    }
+
+    public function test_unknown_operator_throws(): void {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('$unknown');
+        $this->compile($this->makeQuery(), ['type' => ['$unknown' => 'x']]);
+    }
+
+    public function test_unknown_top_level_operator_throws(): void {
+        $this->expectException(InvalidArgumentException::class);
+        $this->compile($this->makeQuery(), ['$not' => [['type' => 'x']]]);
+    }
+
+    public function test_scalar_shorthand_means_eq(): void {
+        // MxChat's own idiom elsewhere: {"type": "product"}.
+        $store = $this->makeQuery();
+        [$fragments, $params] = $this->compile($store, ['type' => 'product', 'is_chunked' => true]);
+        $this->assertSame(['content_type = ?', 'is_chunked = ?'], $fragments);
+        $this->assertSame(['product', true], $params);
+    }
+
+    public function test_and_or_nest_into_parenthesised_groups(): void {
+        // MxChat_Pinecone_Documents::merge_filters() returns
+        // ['$and' => [$a, $b]] (MxChat 3.2.25).
+        $store = $this->makeQuery();
+        [$fragments, $params] = $this->compile($store, [
+            '$and' => [
+                ['type' => ['$eq' => 'product']],
+                ['$or' => [
+                    ['source_url' => ['$in' => ['https://a', 'https://b']]],
+                    ['chunk_index' => ['$gte' => 2], 'title' => 'Specs'],
+                ]],
+            ],
+        ]);
+        $this->assertSame(
+            ['((content_type = ?) AND (((source_url IN (?,?)) OR (chunk_index >= ? AND title = ?))))'],
+            $fragments
+        );
+        $this->assertSame(['product', 'https://a', 'https://b', 2, 'Specs'], $params,
+            'params follow placeholder order across the nesting');
+    }
+
+    public function test_or_branch_on_an_unknown_field_is_false_not_dropped(): void {
+        // Dropping a failing $or branch would be harmless, but dropping a
+        // failing $and member would widen — both compile to FALSE.
+        $store = $this->makeQuery();
+        [$fragments] = $this->compile($store, ['$or' => [['nope' => 'x'], ['type' => 'post']]]);
+        $this->assertSame(['((FALSE) OR (content_type = ?))'], $fragments);
+        [$fragments] = $this->compile($store, ['$and' => [['nope' => 'x'], ['type' => 'post']]]);
+        $this->assertSame(['((FALSE) AND (content_type = ?))'], $fragments);
+    }
+
+    public function test_exists_operator(): void {
+        $store = $this->makeQuery();
+        [$fragments, $params] = $this->compile($store, ['title' => ['$exists' => true], 'parent_url_hash' => ['$exists' => false]]);
+        $this->assertSame(['title IS NOT NULL', 'parent_url_hash IS NULL'], $fragments);
+        $this->assertSame([], $params);
+    }
+
+    public function test_host_timestamp_fields_map_to_the_unix_columns(): void {
+        $store = $this->makeQuery();
+        [$fragments, $params] = $this->compile($store, ['last_updated' => ['$gte' => 1700000000], 'created_at' => ['$lt' => 1800000000]]);
+        $this->assertSame(['last_updated_unix >= ?', 'created_unix < ?'], $fragments);
+        $this->assertSame([1700000000, 1800000000], $params);
+    }
+
+    /** @return array<string, array{0: array<string, mixed>}> */
+    public static function malformedFilters(): array {
+        return [
+            '$and not a list'         => [['$and' => ['type' => 'x']]],
+            '$or empty'               => [['$or' => []]],
+            '$and of scalars'         => [['$and' => ['x', 'y']]],
+            'operator list'           => [['type' => ['post', 'page']]],
+            'empty operator object'   => [['type' => []]],
+            '$in of a scalar'         => [['type' => ['$in' => 'post']]],
+            '$in of objects'          => [['type' => ['$in' => [['a' => 1]]]]],
+            '$eq of a list'           => [['type' => ['$eq' => ['post']]]],
+            '$exists of a string'     => [['title' => ['$exists' => 'yes']]],
+        ];
+    }
+
+    /**
+     * @dataProvider malformedFilters
+     * @param array<string, mixed> $filter
+     */
+    public function test_malformed_filter_throws(array $filter): void {
+        $this->expectException(InvalidArgumentException::class);
+        $this->compile($this->makeQuery(), $filter);
+    }
+
+    public function test_nesting_is_bounded(): void {
+        $filter = ['type' => 'x'];
+        for ($i = 0; $i < MxChat_Plus_DuckDB_Vector_Store_Query::FILTER_MAX_DEPTH + 2; $i++) {
+            $filter = ['$and' => [$filter]];
+        }
+        $this->expectException(InvalidArgumentException::class);
+        $this->compile($this->makeQuery(), $filter);
     }
 
     public function test_string_values_are_passed_through_unescaped(): void {
@@ -141,14 +269,14 @@ final class FilterCompilationTest extends TestCase {
         $this->assertSame(['fr'], $params);
     }
 
-    public function test_filter_returning_unsafe_column_name_is_dropped_not_injected(): void {
+    public function test_filter_returning_unsafe_column_name_fails_closed_not_injected(): void {
         $store = $this->makeQuery();
         // A hostile/buggy callback maps a field to an injection payload.
         $GLOBALS['__test_filter_overrides']['mxchat_plus_duckdb_filter_fields'] = [
             'evil' => 'content_type = 1; DROP TABLE x; --',
         ];
         [$fragments, $params] = $this->compile($store, ['evil' => ['$eq' => 'x']]);
-        $this->assertSame([], $fragments, 'unsafe column name must never reach SQL');
+        $this->assertSame(['FALSE'], $fragments, 'unsafe column name must never reach SQL — the clause matches nothing');
         $this->assertSame([], $params);
     }
 

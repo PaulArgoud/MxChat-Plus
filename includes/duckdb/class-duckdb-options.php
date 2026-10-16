@@ -25,16 +25,31 @@ class MxChat_Plus_DuckDB_Options {
             // fast. Only meaningful when `mode === 'motherduck'`.
             'motherduck_mirror_enabled' => false,
             'motherduck_mirror_path'    => '',             // resolved to uploads/.../mirror.duckdb when empty
-            // Option B reach: mxchat-basic reads its Pinecone config directly
-            // from `mxchat_pinecone_addon_options` for the default bot
-            // (without the multi-bot manager loaded), bypassing the
-            // `mxchat_get_bot_pinecone_config` filter. Set this to true to
-            // shortcircuit reads of that option with our proxy config, so the
-            // companion plugin works on stock mxchat without applying the
-            // upstream patch. Explicit opt-in: writes still go to the DB, so
-            // sites already using real Pinecone don't see their settings
-            // hijacked.
+            // Option B reach: MxChat reads its Pinecone config for the default
+            // bot straight from `mxchat_pinecone_addon_options`, never through
+            // the `mxchat_get_bot_pinecone_config` filter
+            // (MxChat_Integrator::get_bot_pinecone_config,
+            // MxChat_Utils::is_pinecone_enabled_for_bot,
+            // MxChat_Pinecone_Documents::config — MxChat 3.2.25). Set this to
+            // true to answer reads of that option with our proxy config, so
+            // the default bot is served by DuckDB on stock MxChat. Explicit
+            // opt-in: sites already using real Pinecone keep it. The stored
+            // row keeps the real credentials — see
+            // Search_Adapter::restore_real_pinecone_fields().
             'takeover_default_bot_pinecone' => false,
+            // Multi-Bot routing (opt-in, like the default-bot takeover above).
+            // With MxChat's Multi-Bot add-on loaded, MxChat asks
+            // `mxchat_get_bot_pinecone_config` for every other bot, and
+            // answering it moves that bot to the DuckDB proxy. Only the bots
+            // opted in here are answered: all of them
+            // (`takeover_multibot_bots`), or the listed ids
+            // (`takeover_bot_ids`). Any other bot keeps the config the add-on
+            // gave it — its own Pinecone index, or MxChat's shared WordPress
+            // database. An install from before this setting has no
+            // `takeover_bot_ids` key at all; bot_routing() keeps routing the
+            // bots it was already serving.
+            'takeover_multibot_bots' => false,
+            'takeover_bot_ids'       => [],
             'table_name'          => 'mxchat_vectors',
             'embedding_dim'       => 1536,
             'distance_metric'     => 'cosine',
@@ -42,6 +57,14 @@ class MxChat_Plus_DuckDB_Options {
             'top_k'               => 50,
             'embedding_storage'   => 'float32',            // 'float32' | 'int8' (experimental)
             'hybrid_enabled'      => false,                // enable BM25 + vector hybrid scoring
+            // Also blend BM25 on proxy queries while MxChat's own "Hybrid
+            // keyword boost" (host option mxchat_hybrid_keyword_toggle) is
+            // on. Off by default: MxChat documents that switch as having no
+            // effect on a classic Pinecone index, which is what the proxy
+            // is. Read through the proxy's
+            // `mxchat_plus_duckdb_proxy_follow_host_hybrid_toggle` filter
+            // (follow_host_hybrid_toggle_setting()).
+            'hybrid_follow_host_toggle' => false,
             'hybrid_alpha'        => 0.7,                  // weight on vector score (1.0 = pure vector)
             'query_cache_enabled' => true,                 // cache top-K results per (embedding, filter)
             'query_cache_ttl'     => 300,                  // seconds
@@ -54,10 +77,58 @@ class MxChat_Plus_DuckDB_Options {
             'bot_overrides'       => [],
             'last_sync_at'        => 0,
             'last_sync_count'     => 0,
+            // Highest MySQL KB row id a sync has read: the incremental sync
+            // also picks up every newer id, whatever timezone its
+            // `timestamp` was written in.
+            'last_sync_max_id'    => 0,
             'last_compact_at'     => 0,
             'last_error'          => '',
         ];
     }
+
+    /**
+     * Bot ids MxChat gives a meaning of its own (MxChat 3.2.25): 'default' is
+     * the site-wide bot, served through the default-bot takeover, and the
+     * admin Testing tab's 'testing' resolves to it
+     * (MxChat_Integrator::get_bot_pinecone_config). Multi-Bot routing never
+     * answers for them.
+     */
+    const RESERVED_BOT_IDS = ['default', 'testing'];
+
+    /** Seconds between two attempts to record an older install's routing. */
+    const ROUTING_MIGRATION_RETRY = 300;
+    const ROUTING_MIGRATION_TRANSIENT = 'mxchat_plus_duckdb_routing_migration_wait';
+
+    /** Most bot ids `takeover_bot_ids` holds (normalize_bot_ids()). */
+    const MAX_ROUTED_BOT_IDS = 200;
+
+    /**
+     * Rows the routing upgrade lists (Vector_Store::list_bot_ids() clamps
+     * to this). A listing that comes back full may have been cut short.
+     */
+    const ROUTING_MIGRATION_LIST_LIMIT = 1000;
+
+    /**
+     * Form-only fields of the Multi-Bot routing row, never stored. The
+     * marker is rendered while an older install's routing is still not
+     * recorded; the checkbox lets the owner keep routing every bot on
+     * purpose. See sanitize_routing().
+     */
+    const ROUTING_LEGACY_FORM_FIELD = 'takeover_routing_legacy';
+    const ROUTING_KEEP_ALL_FIELD    = 'takeover_routing_keep_all';
+
+    /**
+     * Settings that change which rows a query returns, or their order. The
+     * query-cache key carries none of them, so a change flushes the cache
+     * (handle_settings_saved()).
+     */
+    const RANKING_KEYS = ['hybrid_enabled', 'hybrid_alpha', 'hybrid_follow_host_toggle', 'dedup_per_source', 'distance_metric', 'bot_overrides'];
+
+    /**
+     * Settings that name the physical store. Changing one presents MxChat
+     * with another store — usually an empty one.
+     */
+    const STORE_IDENTITY_KEYS = ['mode', 'motherduck_database', 'embedded_path', 'table_name'];
 
     public static function get(): array {
         $stored = get_option(MXCHAT_PLUS_DUCKDB_OPTION_KEY, []);
@@ -118,10 +189,295 @@ class MxChat_Plus_DuckDB_Options {
         return is_array($filtered) ? $filtered : $base;
     }
 
+    /**
+     * Merge $patch into the stored row. Merged onto what is STORED, not onto
+     * defaults(): a telemetry write must not stamp keys the row never had.
+     * bot_routing() reads a missing `takeover_bot_ids` as "install from
+     * before Multi-Bot routing was opt-in", and a default [] written here by
+     * the hourly sync would silently stop routing bots that were working.
+     * Readers are unaffected: get() still merges the defaults in.
+     */
     public static function update(array $patch): void {
-        $current = self::get();
-        $new = array_merge($current, $patch);
-        update_option(MXCHAT_PLUS_DUCKDB_OPTION_KEY, $new, false);
+        $stored = get_option(MXCHAT_PLUS_DUCKDB_OPTION_KEY, []);
+        if (!is_array($stored)) {
+            $stored = [];
+        }
+        update_option(MXCHAT_PLUS_DUCKDB_OPTION_KEY, array_merge($stored, $patch), false);
+    }
+
+    // ─── Multi-Bot routing ──────────────────────────────────────────────────
+
+    /**
+     * Which non-default bots the search adapter routes to DuckDB.
+     *
+     * An install whose stored row predates the setting (no `takeover_bot_ids`
+     * key) is reported as routing every bot, which is what the module did
+     * then: `migrated` is false until maybe_migrate_bot_routing() has
+     * recorded the bots that really were served.
+     *
+     * @return array{all: bool, bots: list<string>, migrated: bool}
+     */
+    public static function bot_routing(): array {
+        $stored = get_option(MXCHAT_PLUS_DUCKDB_OPTION_KEY, null);
+        if (is_array($stored) && !array_key_exists('takeover_bot_ids', $stored)) {
+            return ['all' => true, 'bots' => [], 'migrated' => false];
+        }
+        $opts = self::get();
+        return [
+            'all'      => !empty($opts['takeover_multibot_bots']),
+            'bots'     => self::normalize_bot_ids($opts['takeover_bot_ids'] ?? []),
+            'migrated' => true,
+        ];
+    }
+
+    /**
+     * Is $bot_id opted in to Multi-Bot routing? Never true for 'default' or
+     * 'testing' (the default-bot takeover covers those).
+     */
+    public static function is_bot_routed(string $bot_id): bool {
+        if ($bot_id === '' || in_array($bot_id, self::RESERVED_BOT_IDS, true)) {
+            return false;
+        }
+        $routing = self::bot_routing();
+        if (!$routing['migrated'] && self::maybe_migrate_bot_routing()) {
+            $routing = self::bot_routing();
+        }
+        return $routing['all'] || in_array($bot_id, $routing['bots'], true);
+    }
+
+    /**
+     * One-time upgrade of an install from before Multi-Bot routing was
+     * opt-in. Back then every non-default bot was routed to DuckDB as soon
+     * as the module was enabled. The bots that already have vectors in
+     * DuckDB were working, so they stay routed. The others were answering
+     * from an empty namespace, and they go back to the config the Multi-Bot
+     * add-on gives them. A disabled module routed nothing, so nothing is
+     * kept.
+     *
+     * Returns true once the routing is recorded. While the store cannot be
+     * listed it returns false (retried at most every
+     * ROUTING_MIGRATION_RETRY seconds), and bot_routing() keeps reporting
+     * the old route-everything behaviour, so nothing moves in the meantime.
+     *
+     * Two ways the list could come out short, and what is done instead:
+     *   - With the MotherDuck local mirror on, reads are served by the local
+     *     copy whatever the state of its bootstrap
+     *     (MxChat_Plus_DuckDB_Mirrored_Connection::execute_read()), and an
+     *     empty local table answers without an error — any chat query
+     *     creates one through ensure_schema(). The listing therefore goes to
+     *     the primary (MotherDuck) side. It runs once per install, so the
+     *     round trip does not matter.
+     *   - The stored list holds at most MAX_ROUTED_BOT_IDS ids, and the
+     *     listing stops at ROUTING_MIGRATION_LIST_LIMIT rows. More bots than
+     *     the list can hold, or a listing that came back full, records
+     *     "route every bot" — exactly what the install did — rather than a
+     *     truncated list that would silently unroute the rest. (Recording
+     *     nothing and retrying would re-list the store on every chat
+     *     request of a non-default bot, forever.)
+     */
+    public static function maybe_migrate_bot_routing(): bool {
+        $stored = get_option(MXCHAT_PLUS_DUCKDB_OPTION_KEY, null);
+        if (!is_array($stored) || array_key_exists('takeover_bot_ids', $stored)) {
+            return true;
+        }
+        $route_all = false;
+        $bots = [];
+        if (!empty($stored['enabled'])) {
+            if (get_transient(self::ROUTING_MIGRATION_TRANSIENT)) {
+                return false;
+            }
+            try {
+                $conn = MxChat_Plus_DuckDB_Connection_Factory::current();
+                if ($conn instanceof MxChat_Plus_DuckDB_Mirrored_Connection) {
+                    $conn = $conn->primary_connection();
+                }
+                $listed = (new MxChat_Plus_DuckDB_Vector_Store($conn))->list_bot_ids(self::ROUTING_MIGRATION_LIST_LIMIT);
+            } catch (\Throwable $e) {
+                set_transient(self::ROUTING_MIGRATION_TRANSIENT, 1, self::ROUTING_MIGRATION_RETRY);
+                return false;
+            }
+            $bots = self::clean_bot_ids($listed, PHP_INT_MAX);
+            if (count($listed) >= self::ROUTING_MIGRATION_LIST_LIMIT || count($bots) > self::MAX_ROUTED_BOT_IDS) {
+                $route_all = true;
+                $bots = [];
+            }
+        }
+        $stored['takeover_multibot_bots'] = $route_all;
+        $stored['takeover_bot_ids']       = self::normalize_bot_ids($bots);
+        update_option(MXCHAT_PLUS_DUCKDB_OPTION_KEY, $stored, false);
+        return true;
+    }
+
+    /**
+     * Bot ids from the settings form (comma- or whitespace-separated text) or
+     * from storage (a list): trimmed, deduplicated, sorted, reserved ids
+     * dropped, at most MAX_ROUTED_BOT_IDS ids of at most 190 characters.
+     *
+     * @param mixed $raw
+     * @return list<string>
+     */
+    public static function normalize_bot_ids($raw): array {
+        return self::clean_bot_ids($raw, self::MAX_ROUTED_BOT_IDS);
+    }
+
+    /**
+     * normalize_bot_ids() with the cap as a parameter.
+     *
+     * @param mixed $raw
+     * @return list<string>
+     */
+    private static function clean_bot_ids($raw, int $cap): array {
+        if (is_string($raw)) {
+            $raw = preg_split('/[\s,]+/', $raw) ?: [];
+        }
+        if (!is_array($raw)) {
+            return [];
+        }
+        $seen = [];
+        foreach ($raw as $id) {
+            if (!is_scalar($id)) continue;
+            $id = sanitize_text_field((string) $id);
+            if ($id === '' || strlen($id) > 190 || in_array($id, self::RESERVED_BOT_IDS, true)) continue;
+            $seen[$id] = true;
+            if (count($seen) >= $cap) break;
+        }
+        $ids = array_map('strval', array_keys($seen));
+        sort($ids, SORT_STRING);
+        return $ids;
+    }
+
+    // ─── Reactions to a settings change ─────────────────────────────────────
+
+    /**
+     * `add_option_` / `update_option_` listener on our settings row (the
+     * hooks fire after the save, so this sees the sanitised values).
+     *
+     * Whenever the store MxChat's default bot reads changes underneath it,
+     * MxChat's media auto-sync signatures still vouch for entries of the
+     * previous store. MxChat compares an edited attachment with its
+     * signature and skips it when nothing changed
+     * (MxChat_Knowledge_Manager::mxchat_handle_attachment_change, MxChat
+     * 3.2.25), so a library file missing from the new store would never come
+     * back. That happens when:
+     *   - DuckDB starts serving the default bot (takeover switched on, or the
+     *     module enabled with it on);
+     *   - DuckDB stops serving it: MxChat is back on its own store, which
+     *     never received what was indexed into DuckDB meanwhile;
+     *   - while it serves, the store is swapped (backend, database, file or
+     *     table) or reset — the dimension and storage layout can only change
+     *     on an empty table (sanitize_for_save() refuses otherwise).
+     * MxChat clears the signatures itself after its own deletes
+     * (MxChat_Utils::delete_chunks_for_url); this is the same call for a
+     * change it cannot see. The cost is one embedding the next time each
+     * library file is edited; MxChat's own Media import ignores signatures.
+     * (Not covered: switching the whole DuckDB module off under MxChat Plus →
+     * Modules, which does not save this row.)
+     *
+     * A change of a ranking setting (RANKING_KEYS) also flushes the query
+     * cache: its key carries none of them, so a cached top-K would otherwise
+     * be served under the old ranking until it expires.
+     *
+     * Deliberately NOT done here: a MySQL → DuckDB sync at switch-on. On a
+     * site that moved to Pinecone, the WordPress table can still hold rows
+     * from before, and copying them would bring retired text back.
+     *
+     * @param mixed $old
+     * @param mixed $new
+     */
+    public static function handle_settings_saved($old, $new): void {
+        $old = array_merge(self::defaults(), is_array($old) ? $old : []);
+        $new = array_merge(self::defaults(), is_array($new) ? $new : []);
+
+        if (self::ranking_changed($old, $new) && class_exists('MxChat_Plus_DuckDB_Cache')) {
+            MxChat_Plus_DuckDB_Cache::flush_query_cache();
+        }
+
+        $was_serving = !empty($old['enabled']) && !empty($old['takeover_default_bot_pinecone']);
+        $serving     = !empty($new['enabled']) && !empty($new['takeover_default_bot_pinecone']);
+        if ($was_serving !== $serving
+            || ($serving && (self::store_identity_changed($old, $new) || self::store_was_reset($old, $new)))) {
+            self::forget_host_attachment_signatures();
+        }
+    }
+
+    /**
+     * `add_option_{option}` passes ($option, $value): the row was just
+     * created, so there is no previous state.
+     *
+     * @param mixed $option
+     * @param mixed $value
+     */
+    public static function handle_settings_added($option, $value): void {
+        self::handle_settings_saved([], $value);
+    }
+
+    /**
+     * @param array<string, mixed> $old
+     * @param array<string, mixed> $new
+     */
+    public static function store_identity_changed(array $old, array $new): bool {
+        foreach (self::STORE_IDENTITY_KEYS as $key) {
+            if ((string) ($old[$key] ?? '') !== (string) ($new[$key] ?? '')) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Did the save change the vector layout? sanitize_for_save() accepts that
+     * only when the table is empty (or cannot be read), so the store MxChat
+     * sees has been wiped.
+     *
+     * @param array<string, mixed> $old
+     * @param array<string, mixed> $new
+     */
+    public static function store_was_reset(array $old, array $new): bool {
+        return (int) ($old['embedding_dim'] ?? 0) !== (int) ($new['embedding_dim'] ?? 0)
+            || (string) ($old['embedding_storage'] ?? '') !== (string) ($new['embedding_storage'] ?? '');
+    }
+
+    /**
+     * @param array<string, mixed> $old
+     * @param array<string, mixed> $new
+     */
+    public static function ranking_changed(array $old, array $new): bool {
+        foreach (self::RANKING_KEYS as $key) {
+            // Loose on purpose: a stored '1' and a sanitised true are the same setting.
+            if (($old[$key] ?? null) != ($new[$key] ?? null)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * `mxchat_plus_duckdb_proxy_follow_host_hybrid_toggle` (priority 5, so a
+     * site's own callback at the default priority still has the last word):
+     * the proxy follows MxChat's "Hybrid keyword boost" when the owner ticked
+     * `hybrid_follow_host_toggle`. The filter is the proxy's opt-in seam
+     * (MxChat_Plus_DuckDB_Pinecone_Proxy::follow_host_hybrid_toggle()); this
+     * is its settings-page switch.
+     *
+     * @param mixed $follow
+     * @param mixed $bot_id
+     */
+    public static function follow_host_hybrid_toggle_setting($follow, $bot_id = 'default'): bool {
+        $opts = self::get();
+        if (!empty($opts['hybrid_follow_host_toggle'])) {
+            return true;
+        }
+        return (bool) $follow;
+    }
+
+    /**
+     * MxChat_Utils::forget_all_attachment_signatures() exists from MxChat
+     * 3.2.24; older hosts keep no signature to clear.
+     */
+    private static function forget_host_attachment_signatures(): void {
+        if (is_callable(['MxChat_Utils', 'forget_all_attachment_signatures'])) {
+            MxChat_Utils::forget_all_attachment_signatures('default');
+        }
     }
 
     public static function install_defaults(): void {
@@ -144,6 +500,7 @@ class MxChat_Plus_DuckDB_Options {
      */
     private const SCHEDULED_JOB_CLASSES = [
         ['MxChat_Plus_DuckDB_Sync',               'CRON_HOOK',   null],
+        ['MxChat_Plus_DuckDB_Sync',               'RESYNC_HOOK', null],
         ['MxChat_Plus_DuckDB_Compactor',          'CRON_HOOK',   null],
         ['MxChat_Plus_DuckDB_Async_Reprocess',    'ACTION_HOOK', 'GROUP'],
         ['MxChat_Plus_DuckDB_Mirror_Bootstrap',   'ACTION_HOOK', 'ACTION_GROUP'],
@@ -342,6 +699,55 @@ class MxChat_Plus_DuckDB_Options {
         }
     }
 
+    /**
+     * The Multi-Bot routing a save records, or null to keep an older
+     * install's routing unrecorded (bot_routing() then keeps routing every
+     * bot, and maybe_migrate_bot_routing() still narrows the list once DuckDB
+     * answers).
+     *
+     * The form always posts the id list (possibly empty), so its presence
+     * says the routing fields were on the page. When they were not — a
+     * programmatic update_option(), which WordPress also runs through this
+     * sanitiser — what is stored is kept as it is.
+     *
+     * While an older install's upgrade is pending, the page renders the
+     * routing as it works today (every bot routed) plus a hidden marker
+     * (ROUTING_LEGACY_FORM_FIELD). A save of that rendering left as it is —
+     * typically a save made to fix the MotherDuck token, not to choose
+     * routing — keeps the upgrade pending instead of freezing "every bot"
+     * forever. Unticking the box, typing ids, or ticking
+     * ROUTING_KEEP_ALL_FIELD records the choice.
+     *
+     * @param array<string, mixed> $input
+     * @param array<string, mixed> $current
+     * @return array{all: bool, bots: list<string>}|null
+     */
+    private static function sanitize_routing(array $input, array $current): ?array {
+        $stored = get_option(MXCHAT_PLUS_DUCKDB_OPTION_KEY, null);
+        $pending = is_array($stored) && !array_key_exists('takeover_bot_ids', $stored);
+
+        if (!array_key_exists('takeover_bot_ids', $input)) {
+            if ($pending) return null;
+            return [
+                'all'  => !empty($current['takeover_multibot_bots']),
+                'bots' => self::normalize_bot_ids($current['takeover_bot_ids'] ?? []),
+            ];
+        }
+
+        $all  = !empty($input['takeover_multibot_bots']);
+        $bots = self::normalize_bot_ids($input['takeover_bot_ids']);
+        if ($pending
+            && !empty($input[self::ROUTING_LEGACY_FORM_FIELD])
+            && empty($input[self::ROUTING_KEEP_ALL_FIELD])
+            && $all && $bots === []) {
+            return null;
+        }
+        if (!empty($input[self::ROUTING_KEEP_ALL_FIELD])) {
+            $all = true;
+        }
+        return ['all' => $all, 'bots' => $bots];
+    }
+
     public static function sanitize_for_save(array $input): array {
         $current = self::get();
         $out = self::defaults();
@@ -367,6 +773,14 @@ class MxChat_Plus_DuckDB_Options {
         // Option B works on stock mxchat without the upstream patch and
         // without multi-bot. Pure boolean — no shape to validate.
         $out['takeover_default_bot_pinecone'] = !empty($input['takeover_default_bot_pinecone']);
+
+        $routing = self::sanitize_routing($input, $current);
+        if ($routing === null) {
+            unset($out['takeover_multibot_bots'], $out['takeover_bot_ids']);
+        } else {
+            $out['takeover_multibot_bots'] = $routing['all'];
+            $out['takeover_bot_ids']       = $routing['bots'];
+        }
         $mirror_requested = !empty($input['motherduck_mirror_enabled']);
         if ($mirror_requested && $out['mode'] !== 'motherduck') {
             add_settings_error(
@@ -431,6 +845,7 @@ class MxChat_Plus_DuckDB_Options {
             }
         }
         $out['hybrid_enabled']      = !empty($input['hybrid_enabled']);
+        $out['hybrid_follow_host_toggle'] = !empty($input['hybrid_follow_host_toggle']);
         $alpha                       = (float) ($input['hybrid_alpha'] ?? 0.7);
         $out['hybrid_alpha']        = max(0.0, min(1.0, $alpha));
         $out['query_cache_enabled'] = !empty($input['query_cache_enabled']);
@@ -501,11 +916,18 @@ class MxChat_Plus_DuckDB_Options {
             $out['embedding_dim'] = $requested_dim;
         }
 
-        // Preserve runtime telemetry fields.
-        $out['last_sync_at']    = $current['last_sync_at'];
-        $out['last_sync_count'] = $current['last_sync_count'];
-        $out['last_compact_at'] = $current['last_compact_at'] ?? 0;
-        $out['last_error']      = $current['last_error'];
+        // Runtime telemetry. The settings form never posts these, so a form
+        // save keeps the stored values. They are present when the input is
+        // a programmatic write: register_setting() hooks this sanitiser on
+        // `sanitize_option_{option}`, so every update_option() of the row in
+        // a request where admin_init ran (admin pages, admin-ajax) comes
+        // through here — and Options::update() from "Sync now" used to have
+        // its fresh last_sync_at replaced by the stale stored one.
+        $out['last_sync_at']     = isset($input['last_sync_at']) ? (int) $input['last_sync_at'] : (int) $current['last_sync_at'];
+        $out['last_sync_count']  = isset($input['last_sync_count']) ? (int) $input['last_sync_count'] : (int) $current['last_sync_count'];
+        $out['last_sync_max_id'] = isset($input['last_sync_max_id']) ? (int) $input['last_sync_max_id'] : (int) ($current['last_sync_max_id'] ?? 0);
+        $out['last_compact_at']  = isset($input['last_compact_at']) ? (int) $input['last_compact_at'] : (int) ($current['last_compact_at'] ?? 0);
+        $out['last_error']       = isset($input['last_error']) ? (string) $input['last_error'] : (string) $current['last_error'];
 
         // Drop the cached connection + Vector_Store so next request picks up
         // the new config without a process reload.
@@ -523,10 +945,23 @@ class MxChat_Plus_DuckDB_Options {
      * Option holding the empirically-probed output dimension of a Custom /
      * Azure OpenAI embedding provider, whose dimension can't be derived from
      * mxchat-basic's static registry. Shaped:
-     *   ['model' => 'custom:<id>', 'dim' => <int>, 'at' => <unix ts>]
-     * Written by the "Detect dimension" admin probe (ajax_detect_dimension).
+     *   ['model' => 'custom:<id>', 'dim' => <int>, 'at' => <unix ts>, 'key' => <md5>]
+     * `key` identifies base URL + model the way MxChat's own cache does
+     * (custom_dimension_key()); entries written before it existed carry only
+     * `model`. Written by the "Detect dimension" admin probe
+     * (ajax_detect_dimension).
      */
     const CUSTOM_DIM_OPTION = 'mxchat_plus_duckdb_custom_embedding_dim';
+
+    /**
+     * Host literal: the option where MxChat caches a Custom Provider model's
+     * dimension after its own probe, shaped ['key', 'model', 'dimension']
+     * (MxChat_Utils::custom_embedding_dimension, MxChat 3.2.24+). Read only.
+     */
+    const HOST_CUSTOM_DIM_OPTION = 'mxchat_custom_embedding_dimension';
+
+    /** Placeholder shown for a custom model nobody has probed yet. */
+    const CUSTOM_DIM_PLACEHOLDER = 1536;
 
     /**
      * True when MxChat is producing embeddings through the Custom (OpenAI-
@@ -540,42 +975,145 @@ class MxChat_Plus_DuckDB_Options {
         return strpos($model, 'custom:') === 0;
     }
 
-    /**
-     * The embedding model MxChat is actually writing vectors with. Prefers the
-     * `mxchat_active_embedding_model` stamp (set right after a successful
-     * embedding, so it reflects the real model — including `custom:<id>`),
-     * falling back to the configured setting on a never-embedded install.
-     */
-    public static function active_embedding_model(): string {
-        $active = (string) get_option('mxchat_active_embedding_model', '');
-        if ($active !== '') return $active;
+    /** @return array<string, mixed> MxChat's own settings (mxchat_options). */
+    private static function mxchat_options(): array {
         $mxopts = get_option('mxchat_options', []);
+        return is_array($mxopts) ? $mxopts : [];
+    }
+
+    /**
+     * Is MxChat's next embed going through the Custom Provider? The same test
+     * MxChat_Utils::generate_embedding() makes first (MxChat 3.2.25).
+     *
+     * @param array<string, mixed>|null $mxopts
+     */
+    public static function custom_embeddings_enabled(?array $mxopts = null): bool {
+        $mxopts = $mxopts ?? self::mxchat_options();
+        return ($mxopts['custom_provider_for_embeddings'] ?? '') === 'on';
+    }
+
+    /**
+     * The model name the Custom Provider is sent. Delegates to
+     * MxChat_Utils::resolve_custom_embedding_model() (MxChat 3.2.21+); the
+     * fallback is the same chain: embedding model, else chat model, else
+     * 'default'.
+     *
+     * @param array<string, mixed> $mxopts
+     */
+    private static function custom_model_name(array $mxopts): string {
+        if (is_callable(['MxChat_Utils', 'resolve_custom_embedding_model'])) {
+            return (string) MxChat_Utils::resolve_custom_embedding_model($mxopts);
+        }
+        foreach (['custom_provider_embedding_model', 'custom_provider_model'] as $k) {
+            if (isset($mxopts[$k]) && trim((string) $mxopts[$k]) !== '') {
+                return trim((string) $mxopts[$k]);
+            }
+        }
+        return 'default';
+    }
+
+    /**
+     * The model MxChat's NEXT embed will use — the selection, as opposed to
+     * the stamp of the vectors already stored (active_embedding_model()).
+     * Delegates to MxChat_Utils::get_selected_embedding_model() (MxChat
+     * 3.2.21+), which reports a Custom Provider model as `custom:<model>`.
+     */
+    public static function selected_embedding_model(): string {
+        $mxopts = self::mxchat_options();
+        if (is_callable(['MxChat_Utils', 'get_selected_embedding_model'])) {
+            $model = (string) MxChat_Utils::get_selected_embedding_model($mxopts);
+            if ($model !== '') return $model;
+        }
+        if (self::custom_embeddings_enabled($mxopts)) {
+            return 'custom:' . self::custom_model_name($mxopts);
+        }
         return (string) ($mxopts['embedding_model'] ?? 'text-embedding-ada-002');
     }
 
     /**
+     * The embedding model MxChat is actually writing vectors with. Prefers the
+     * `mxchat_active_embedding_model` stamp (set right after a successful
+     * embedding, so it reflects the real model — including `custom:<id>`),
+     * falling back to the selected model on a never-embedded install.
+     */
+    public static function active_embedding_model(): string {
+        $active = (string) get_option('mxchat_active_embedding_model', '');
+        if ($active !== '') return $active;
+        return self::selected_embedding_model();
+    }
+
+    /**
+     * Identity of a Custom Provider model, in MxChat's own key format:
+     * md5(lowercased base URL without trailing slash . '|' . model)
+     * (MxChat_Utils::custom_embedding_dimension, MxChat 3.2.24+). Copied, not
+     * called: the host function probes the endpoint when its cache is empty,
+     * a blocking request this plugin must not make while rendering a page.
+     * Keying on the base URL as well as the model means a probe measured
+     * against another endpoint is never reused.
+     *
+     * @param array<string, mixed>|null $mxopts
+     * @param string|null               $model  `custom:<name>` or bare name; null = the selected one.
+     */
+    public static function custom_dimension_key(?array $mxopts = null, ?string $model = null): string {
+        $mxopts = $mxopts ?? self::mxchat_options();
+        $name = $model === null ? self::custom_model_name($mxopts) : $model;
+        if (self::is_custom_embedding_model($name)) {
+            $name = substr($name, 7);
+        }
+        $base_url = isset($mxopts['custom_provider_base_url']) ? rtrim(trim((string) $mxopts['custom_provider_base_url']), '/') : '';
+        return md5(strtolower($base_url) . '|' . $name);
+    }
+
+    /**
      * Persist an empirically-probed custom-provider dimension, keyed to the
-     * model it was measured against so a later model switch invalidates it.
+     * model and endpoint it was measured against so a later switch of either
+     * invalidates it.
      */
     public static function store_probed_custom_dim(string $model, int $dim): void {
         update_option(self::CUSTOM_DIM_OPTION, [
             'model' => $model,
             'dim'   => $dim,
             'at'    => time(),
+            'key'   => self::custom_dimension_key(null, $model),
         ], false);
     }
 
     /**
-     * The probed custom dimension iff it was measured against $model, else 0.
+     * The probed custom dimension iff it was measured against $model (and,
+     * for a probe that recorded it, the current endpoint), else 0.
      */
     public static function probed_custom_dim(string $model): int {
         $probe = get_option(self::CUSTOM_DIM_OPTION, []);
-        if (is_array($probe)
-            && ($probe['model'] ?? '') === $model
-            && (int) ($probe['dim'] ?? 0) > 0) {
-            return (int) $probe['dim'];
+        if (!is_array($probe) || ($probe['model'] ?? '') !== $model || (int) ($probe['dim'] ?? 0) <= 0) {
+            return 0;
+        }
+        if (isset($probe['key']) && $probe['key'] !== self::custom_dimension_key(null, $model)) {
+            return 0;
+        }
+        return (int) $probe['dim'];
+    }
+
+    /**
+     * The dimension MxChat itself recorded for this custom model, read from
+     * its cache without ever triggering its probe. 0 when unknown.
+     */
+    public static function host_cached_custom_dim(string $model): int {
+        $known = get_option(self::HOST_CUSTOM_DIM_OPTION, []);
+        if (is_array($known)
+            && ($known['key'] ?? '') === self::custom_dimension_key(null, $model)
+            && (int) ($known['dimension'] ?? 0) > 0) {
+            return (int) $known['dimension'];
         }
         return 0;
+    }
+
+    /**
+     * Dimension of a `custom:<model>`: our own probe, else MxChat's cached
+     * one, else 0.
+     */
+    private static function custom_model_dim(string $model): int {
+        $dim = self::probed_custom_dim($model);
+        return $dim > 0 ? $dim : self::host_cached_custom_dim($model);
     }
 
     /**
@@ -588,29 +1126,55 @@ class MxChat_Plus_DuckDB_Options {
      *
      * Custom / Azure OpenAI providers (model `custom:<id>`, mxchat-basic
      * >= 3.2.8) are not in any registry — their dimension is whatever the
-     * endpoint returns (768/1024/3072/…). For those we use the empirically
-     * probed value when present; otherwise we surface the 1536 default purely
-     * as a placeholder (the operator must run "Detect dimension" or set it by
-     * hand, and the insert-time guard in Vector_Store catches any mismatch).
+     * endpoint returns (768/1024/3072/…). For those we use our probe, else
+     * the dimension MxChat cached from its own probe (3.2.24+); otherwise we
+     * surface the 1536 default purely as a placeholder (the operator must run
+     * "Detect dimension" or set it by hand, and the insert-time guard in
+     * Vector_Store catches any mismatch).
+     *
+     * When the stamped model is the one selected for the next embed, a
+     * standard model's size comes from MxChat_Utils::standard_embedding_dimension()
+     * (MxChat 3.2.24+), which also honours the Voyage / Gemini output-size
+     * settings.
      *
      * Fallback default is 1536 (ada-002 / TE3 Small).
      */
     public static function detect_embedding_dim(): int {
-        $active = self::active_embedding_model();
+        return self::dimension_of(self::active_embedding_model());
+    }
 
+    /**
+     * Dimension of the model MxChat's next embed will use, or 0 for a custom
+     * model nobody has probed. Shown beside detect_embedding_dim() when the
+     * two models differ — never swapped in for it: the stamp describes the
+     * vectors already stored, the selection the ones to come.
+     */
+    public static function selected_embedding_dim(): int {
+        $selected = self::selected_embedding_model();
+        if (self::is_custom_embedding_model($selected)) {
+            return self::custom_model_dim($selected);
+        }
+        return self::dimension_of($selected);
+    }
+
+    private static function dimension_of(string $model): int {
         // Custom / Azure providers: dimension is endpoint-defined, not
-        // registry-derived. Use the probe if it matches the current model.
-        if (self::is_custom_embedding_model($active)) {
-            $probed = self::probed_custom_dim($active);
-            if ($probed > 0) return $probed;
-            return 1536; // placeholder until the operator probes or sets it
+        // registry-derived.
+        if (self::is_custom_embedding_model($model)) {
+            $dim = self::custom_model_dim($model);
+            return $dim > 0 ? $dim : self::CUSTOM_DIM_PLACEHOLDER;
+        }
+
+        if ($model === self::selected_embedding_model() && is_callable(['MxChat_Utils', 'standard_embedding_dimension'])) {
+            $dim = (int) MxChat_Utils::standard_embedding_dimension(self::mxchat_options());
+            if ($dim > 0) return $dim;
         }
 
         // Single source of truth lives in mxchat-basic. Use it when possible.
         // (is_callable rather than method_exists so PHPStan + the WP stubs
         // don't narrow the second check away in static analysis.)
         if (is_callable(['MxChat_Utils', 'embedding_model_dimensions'])) {
-            $dim = (int) MxChat_Utils::embedding_model_dimensions($active);
+            $dim = (int) MxChat_Utils::embedding_model_dimensions($model);
             if ($dim > 0) return $dim;
         }
 
@@ -630,6 +1194,6 @@ class MxChat_Plus_DuckDB_Options {
             'gemini-embedding-exp-03-07' => 1536, // auto-migrated to gemini-embedding-001
         ];
 
-        return $known[$active] ?? 1536;
+        return $known[$model] ?? 1536;
     }
 }

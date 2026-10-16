@@ -9,6 +9,9 @@
  * Ce fichier DÉCLARE la classe et rien d'autre : aucun WP_CLI::add_command() ici.
  * L'enregistrement de la commande appartient au noyau de mxchat-plus, qui décide
  * du nom et de l'ordre de chargement (même contrat que class-duckdb-cli.php).
+ *
+ * Chaînes sources en anglais (CLAUDE.md) ; la traduction française vit dans
+ * languages/mxchat-plus-fr_FR.po.
  */
 
 if (!defined('ABSPATH')) {
@@ -44,27 +47,27 @@ class MxChat_Plus_PromptCache_CLI {
         if ($show_total) {
             $total = ($store !== null && isset($store['total']) && is_array($store['total'])) ? $store['total'] : null;
             if ($total === null) {
-                \WP_CLI::log(__('Aucune statistique cumulative enregistrée.', 'mxchat-plus'));
+                \WP_CLI::log(__('No cumulative statistics recorded.', 'mxchat-plus'));
             } else {
-                $this->print_block(__('Cumulatif (depuis installation)', 'mxchat-plus'), $total, true);
+                $this->print_block(__('Cumulative (since installation)', 'mxchat-plus'), $total, true);
                 if ($show_by_model && !empty($total['per_model'])) {
-                    $this->print_per_model(__('Détail par modèle (cumulatif)', 'mxchat-plus'), $total['per_model']);
+                    $this->print_per_model(__('Per-model breakdown (cumulative)', 'mxchat-plus'), $total['per_model']);
                 }
             }
         }
 
         $window = $store !== null ? MxChat_Plus_PromptCache_Stats::aggregate_window($store) : null;
         if ($window === null || (int) ($window['requests'] ?? 0) === 0) {
-            \WP_CLI::log(__('Aucune requête dans les dernières 24 h.', 'mxchat-plus'));
+            \WP_CLI::log(__('No requests in the last 24 hours.', 'mxchat-plus'));
             return;
         }
         if (isset($window['window_start'])) {
             $window['since'] = $window['window_start'];
         }
-        $this->print_block(__('Dernières 24 h (glissant)', 'mxchat-plus'), $window, true);
+        $this->print_block(__('Last 24 hours (sliding)', 'mxchat-plus'), $window, true);
 
         if ($show_by_model && !empty($window['per_model'])) {
-            $this->print_per_model(__('Détail par modèle (24 h)', 'mxchat-plus'), $window['per_model']);
+            $this->print_per_model(__('Per-model breakdown (24 hours)', 'mxchat-plus'), $window['per_model']);
         }
     }
 
@@ -83,11 +86,11 @@ class MxChat_Plus_PromptCache_CLI {
         MxChat_Plus_PromptCache_Stats::delete_debug();
         if (!empty($assoc_args['total'])) {
             MxChat_Plus_PromptCache_Stats::delete_store();
-            \WP_CLI::success(__('Statistiques (24 h + cumulatives) et debug réinitialisés.', 'mxchat-plus'));
+            \WP_CLI::success(__('Statistics (24 hours and cumulative) and debug data reset.', 'mxchat-plus'));
         } else {
             // Vide seulement la fenêtre 24 h (buckets), conserve le cumulatif.
             MxChat_Plus_PromptCache_Stats::clear_window();
-            \WP_CLI::success(__('Statistiques 24 h et debug réinitialisés (cumulatif conservé).', 'mxchat-plus'));
+            \WP_CLI::success(__('24-hour statistics and debug data reset (cumulative kept).', 'mxchat-plus'));
         }
     }
 
@@ -95,40 +98,69 @@ class MxChat_Plus_PromptCache_CLI {
     public function debug(): void {
         $debug = MxChat_Plus_PromptCache_Stats::get_debug();
         if ($debug === null) {
-            \WP_CLI::log(__('Aucune donnée de debug (transient expiré ou aucune requête récente).', 'mxchat-plus'));
+            \WP_CLI::log(__('No debug data (transient expired or no recent request).', 'mxchat-plus'));
             return;
         }
-        $yes = __('oui', 'mxchat-plus');
-        $no  = __('non', 'mxchat-plus');
+        $yes = __('yes', 'mxchat-plus');
+        $no  = __('no', 'mxchat-plus');
+        $bp  = isset($debug['breakpoints']) && is_array($debug['breakpoints']) ? $debug['breakpoints'] : [];
+
+        $volatile = !empty($debug['volatile_system']) ? $yes : $no;
+        $reason   = self::volatile_reason_label(is_string($debug['volatile_reason'] ?? null) ? $debug['volatile_reason'] : '');
+        if ($reason !== '') {
+            $volatile .= ' (' . $reason . ')';
+        }
+
         \WP_CLI::log(sprintf(
+            /* translators: 1: date and time, 2: requested model, 3: model in the response, 4: minimum size in characters, 5: payload shape identifier, 6: yes/no plus the reason, 7: count of lengthened TTLs, 8: count of repaired tool inputs, 9-13: yes/no per breakpoint, 14-16: token counts. */
             __(
-                "Dernière requête  : %s\n" .
-                "Modèle (request)  : %s\n" .
-                "Modèle (réponse)  : %s\n" .
-                "Seuil min (chars) : %d\n" .
-                "Breakpoints ajoutés :\n" .
-                "  - tools     : %s\n" .
-                "  - system    : %s\n" .
-                "  - prev_user : %s\n" .
-                "  - last_user : %s\n" .
-                "Usage (tokens) :\n" .
-                "  - input                 : %d\n" .
-                "  - cache_creation_input  : %d\n" .
-                "  - cache_read_input      : %d",
+                "Last request       : %1\$s\n" .
+                "Model (request)    : %2\$s\n" .
+                "Model (response)   : %3\$s\n" .
+                "Min size (chars)   : %4\$d\n" .
+                "Payload shape      : %5\$s\n" .
+                "Volatile system    : %6\$s\n" .
+                "TTLs lengthened    : %7\$d\n" .
+                "Tool inputs fixed  : %8\$d\n" .
+                "Breakpoints added  :\n" .
+                "  - tools          : %9\$s\n" .
+                "  - system         : %10\$s\n" .
+                "  - prev_user      : %11\$s\n" .
+                "  - last_user      : %12\$s\n" .
+                "  - context_block  : %13\$s\n" .
+                "Usage (tokens):\n" .
+                "  - input                 : %14\$d\n" .
+                "  - cache_creation_input  : %15\$d\n" .
+                "  - cache_read_input      : %16\$d",
                 'mxchat-plus'
             ),
             wp_date('Y-m-d H:i:s', (int) ($debug['time'] ?? 0)),
-            $debug['model'] ?? '—',
-            $debug['response_model'] ?? '—',
+            is_string($debug['model'] ?? null) ? $debug['model'] : '—',
+            is_string($debug['response_model'] ?? null) ? $debug['response_model'] : '—',
             (int) ($debug['min_chars'] ?? 0),
-            !empty($debug['breakpoints']['tools'])     ? $yes : $no,
-            !empty($debug['breakpoints']['system'])    ? $yes : $no,
-            !empty($debug['breakpoints']['prev_user']) ? $yes : $no,
-            !empty($debug['breakpoints']['last_user']) ? $yes : $no,
+            is_string($debug['shape'] ?? null) ? $debug['shape'] : '—',
+            $volatile,
+            (int) ($debug['ttl_upgraded'] ?? 0),
+            (int) ($debug['tool_inputs_repaired'] ?? 0),
+            !empty($bp['tools'])         ? $yes : $no,
+            !empty($bp['system'])        ? $yes : $no,
+            !empty($bp['prev_user'])     ? $yes : $no,
+            !empty($bp['last_user'])     ? $yes : $no,
+            !empty($bp['context_block']) ? $yes : $no,
             (int) ($debug['usage']['input_tokens'] ?? 0),
             (int) ($debug['usage']['cache_creation_input_tokens'] ?? 0),
             (int) ($debug['usage']['cache_read_input_tokens'] ?? 0)
         ));
+    }
+
+    /** Libellé lisible d'une raison de system volatile ('' si aucune). */
+    public static function volatile_reason_label(string $reason): string {
+        return match ($reason) {
+            MxChat_Plus_PromptCache_Models::VOLATILE_KB_BLOCK         => __('knowledge-base block in the system prompt ({context})', 'mxchat-plus'),
+            MxChat_Plus_PromptCache_Models::VOLATILE_CURRENT_DATETIME => __('{current_datetime} placeholder, changes every minute', 'mxchat-plus'),
+            MxChat_Plus_PromptCache_Models::VOLATILE_FILTER           => __('set by the mxchat_plus_promptcache_volatile_system filter', 'mxchat-plus'),
+            default                                                   => '',
+        };
     }
 
     /** @param array<string,mixed> $per_model */
@@ -153,15 +185,21 @@ class MxChat_Plus_PromptCache_CLI {
 
         $lines = [
             sprintf("\n[%s]", $label),
-            sprintf(__('  Requêtes              : %d', 'mxchat-plus'), $requests),
-            sprintf(__('  Tokens lus du cache   : %d', 'mxchat-plus'), $cached),
-            sprintf(__('  Tokens écrits cache   : %d', 'mxchat-plus'), $creation),
-            sprintf(__('  Tokens entrée bruts   : %d', 'mxchat-plus'), $input),
-            sprintf(__('  Taux de hit (cache)   : %.1f %%', 'mxchat-plus'), $hit_rate),
+            /* translators: %d: number of requests. */
+            sprintf(__('  Requests                : %d', 'mxchat-plus'), $requests),
+            /* translators: %d: number of tokens. */
+            sprintf(__('  Tokens read from cache  : %d', 'mxchat-plus'), $cached),
+            /* translators: %d: number of tokens. */
+            sprintf(__('  Tokens written to cache : %d', 'mxchat-plus'), $creation),
+            /* translators: %d: number of tokens. */
+            sprintf(__('  Uncached input tokens   : %d', 'mxchat-plus'), $input),
+            /* translators: %.1f: percentage. */
+            sprintf(__('  Cache hit rate          : %.1f %%', 'mxchat-plus'), $hit_rate),
         ];
         if ($with_since && isset($s['since'])) {
             $lines[] = sprintf(
-                __('  Depuis                : %s', 'mxchat-plus'),
+                /* translators: %s: date and time. */
+                __('  Since                   : %s', 'mxchat-plus'),
                 wp_date('Y-m-d H:i:s', (int) $s['since'])
             );
         }

@@ -24,6 +24,10 @@ class MxChat_Plus_DuckDB_Admin {
         // tab and calls render_page() directly. register_menu() is kept for
         // the case where the core page is unavailable.
         add_action('admin_init', [$this, 'register_settings']);
+        // Record, once, which Multi-Bot bots an install from before the
+        // opt-in was already serving — before the settings page renders
+        // the routing fields from it. See Options::bot_routing().
+        add_action('admin_init', [$this, 'migrate_bot_routing']);
         add_action('admin_enqueue_scripts', [$this, 'enqueue_assets']);
         add_action('admin_notices', [$this, 'render_capability_notices']);
 
@@ -146,6 +150,11 @@ class MxChat_Plus_DuckDB_Admin {
         }
     }
 
+    /** admin_init wrapper: actions return nothing. */
+    public function migrate_bot_routing(): void {
+        MxChat_Plus_DuckDB_Options::maybe_migrate_bot_routing();
+    }
+
     public function register_settings(): void {
         register_setting(self::MENU_SLUG, MXCHAT_PLUS_DUCKDB_OPTION_KEY, [
             'sanitize_callback' => [MxChat_Plus_DuckDB_Options::class, 'sanitize_for_save'],
@@ -192,7 +201,16 @@ class MxChat_Plus_DuckDB_Admin {
         $proxy_host = MxChat_Plus_DuckDB_Pinecone_Proxy::pinecone_host();
         $detected_dim = MxChat_Plus_DuckDB_Options::detect_embedding_dim();
         $active_embedding_model = MxChat_Plus_DuckDB_Options::active_embedding_model();
-        $embedding_model_is_custom = MxChat_Plus_DuckDB_Options::is_custom_embedding_model($active_embedding_model);
+        // The Detect button follows the CURRENT selection (Custom Provider
+        // on), not the stamp of the stored vectors: a site that just switched
+        // to a custom model must be able to probe it before embedding.
+        $embedding_model_is_custom = MxChat_Plus_DuckDB_Options::custom_embeddings_enabled();
+        $selected_embedding_model = MxChat_Plus_DuckDB_Options::selected_embedding_model();
+        $selected_embedding_dim = MxChat_Plus_DuckDB_Options::selected_embedding_dim();
+        $bot_routing = MxChat_Plus_DuckDB_Options::bot_routing();
+        // Host literal: the Multi-Bot add-on's class, the same test MxChat
+        // makes before asking mxchat_get_bot_pinecone_config.
+        $multibot_active = class_exists('MxChat_Multi_Bot_Manager');
 
         // Discover bots for the per-bot overrides UI. Best-effort: a disabled
         // or erroring backend just yields an empty list (the section degrades
@@ -282,15 +300,19 @@ class MxChat_Plus_DuckDB_Admin {
 
     /**
      * Empirically probe a Custom / Azure OpenAI embedding provider for the
-     * vector dimension it returns, then cache it keyed to the active model.
+     * vector dimension it returns, then cache it keyed to the selected model
+     * and endpoint.
      *
      * Built-in models carry their dimension in mxchat-basic's registry, so
      * detect_embedding_dim() resolves them without help. Custom providers
-     * (mxchat-basic >= 3.2.8, active model `custom:<id>`) don't — the only way
-     * to know the dimension is to ask the endpoint. We embed a tiny probe
+     * (mxchat-basic >= 3.2.8, model `custom:<id>`) don't — the only way to
+     * know the dimension is to ask the endpoint. We embed a tiny probe
      * string through mxchat's own custom-embedding routine and measure the
      * returned vector, so we honour the exact Base URL / auth / model the
-     * operator configured.
+     * operator configured. Always a live probe, deliberately not
+     * MxChat_Utils::custom_embedding_dimension() (3.2.24+), which answers
+     * from MxChat's cache when it has an entry; the result is stored under
+     * MxChat's own key format (Options::custom_dimension_key()).
      */
     public function ajax_detect_dimension(): void {
         check_ajax_referer(self::NONCE_ACTION, 'nonce');
@@ -316,12 +338,12 @@ class MxChat_Plus_DuckDB_Admin {
         }
 
         $dim = count($result);
-        // generate_embedding_custom stamps mxchat_active_embedding_model as
-        // `custom:<id>` on success, so read it back to key the cache correctly.
-        $active = MxChat_Plus_DuckDB_Options::active_embedding_model();
-        MxChat_Plus_DuckDB_Options::store_probed_custom_dim($active, $dim);
+        // The model just probed: `custom:<model>` of the current settings,
+        // the same identity generate_embedding_custom() stamps on success.
+        $model = MxChat_Plus_DuckDB_Options::selected_embedding_model();
+        MxChat_Plus_DuckDB_Options::store_probed_custom_dim($model, $dim);
 
-        wp_send_json_success(['dim' => $dim, 'model' => $active]);
+        wp_send_json_success(['dim' => $dim, 'model' => $model]);
     }
 
     public function ajax_stats(): void {

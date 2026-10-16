@@ -371,4 +371,185 @@ final class VectorStoreQueryRunTest extends TestCase {
         $sql = $conn->log[0] ?? '';
         $this->assertStringContainsString('array_inner_product', $sql);
     }
+
+    // ─── score is always the raw cosine (#72) ────────────────────────────
+
+    /** @return array<string, array{0: string, 1: string}> metric => [order column, ranking expression] */
+    public static function metrics(): array {
+        return [
+            'cosine' => ['cosine', 'ORDER BY score DESC'],
+            'l2sq'   => ['l2sq', 'ORDER BY rank_score DESC'],
+            'ip'     => ['ip', 'ORDER BY rank_score DESC'],
+        ];
+    }
+
+    /**
+     * MxChat compares matches[].score with its similarity threshold and the
+     * YouTube-card floor ("Pinecone's score IS the cosine",
+     * MxChat_Integrator, MxChat 3.2.25). An l2sq install used to return
+     * -distance (≤ 0, every match dropped); ip returned an unbounded dot.
+     *
+     * @dataProvider metrics
+     */
+    public function test_score_is_the_cosine_whatever_the_metric(string $metric, string $order): void {
+        foreach ([false, true] as $dedup) {
+            update_option('mxchat_plus_duckdb_options', array_merge(MxChat_Plus_DuckDB_Options::defaults(), [
+                'embedding_dim' => 3, 'dedup_per_source' => $dedup, 'query_cache_enabled' => false,
+            ]));
+            $conn = $this->makeRecordingConnection([]);
+            $query = new MxChat_Plus_DuckDB_Vector_Store_Query($conn, 'mxchat_vectors', 3, $metric, 'float32');
+            $query->run([0.1, 0.2, 0.3], 10, 'default', []);
+            $sql = $conn->log[0] ?? '';
+
+            $this->assertStringContainsString('array_cosine_similarity(embedding, [0.1,0.2,0.3]::FLOAT[3]) AS score', $sql, "$metric: score column is the cosine");
+            $this->assertStringContainsString($order, $sql, "$metric: rows are still ranked by the configured metric");
+            if ($metric !== 'cosine') {
+                $this->assertMatchesRegularExpression('/(array_distance|array_inner_product)\(embedding, \[0.1,0.2,0.3\]::FLOAT\[3\]\)\)? AS rank_score/', $sql);
+            }
+            if ($dedup) {
+                $this->assertStringContainsString('ROW_NUMBER() OVER (PARTITION BY source_url ' . $order . ') AS rn', $sql,
+                    "$metric: the dedup keeps each source's best row by the metric");
+                $this->assertStringContainsString('SELECT id, score, text', $sql, 'rank_score is not returned');
+            }
+        }
+    }
+
+    public function test_int8_storage_scores_the_dequantised_vector(): void {
+        update_option('mxchat_plus_duckdb_options', array_merge(MxChat_Plus_DuckDB_Options::defaults(), ['embedding_dim' => 3]));
+        $conn = $this->makeRecordingConnection([]);
+        $query = new MxChat_Plus_DuckDB_Vector_Store_Query($conn, 'mxchat_vectors', 3, 'l2sq', 'int8');
+        $query->run([0.1, 0.2, 0.3], 10, 'default', []);
+        $sql = $conn->log[0] ?? '';
+        $this->assertStringContainsString('array_cosine_similarity(' . MxChat_Plus_DuckDB_Quantization::sql_dequantize_expression(3), $sql);
+    }
+
+    public function test_hybrid_blend_orders_but_never_replaces_the_score(): void {
+        // Vector leg (cosine): 'top' 0.95, 'good' 0.80 (a fine match with no
+        // keyword hit), 'kw' 0.20 (keyword hit). The BM25 leg finds only 'kw'.
+        $vector = [
+            ['id' => 'top',  'score' => 0.95, 'source_url' => 'u1'],
+            ['id' => 'good', 'score' => 0.80, 'source_url' => 'u2'],
+            ['id' => 'kw',   'score' => 0.20, 'source_url' => 'u3'],
+        ];
+        $bm25 = [['id' => 'kw', 'score' => 7.5]];
+        $out = MxChat_Plus_DuckDB_Vector_Store_Query::blend_hybrid($vector, $bm25, 0.7, 3);
+
+        $this->assertSame(['top', 'good', 'kw'], array_column($out, 'id'));
+        $this->assertSame([0.95, 0.80, 0.20], array_column($out, 'score'),
+            'scores stay the raw cosines — the min-max blend used to turn the best row of an off-topic question into ≥ alpha');
+
+        // The blend decides the cut: with room for two, the keyword hit
+        // displaces nothing above it — and 'good' keeps 0.80, so MxChat's
+        // 0.35 threshold keeps it (the normalised blend gave it ≈0.5).
+        $two = MxChat_Plus_DuckDB_Vector_Store_Query::blend_hybrid($vector, $bm25, 0.7, 2);
+        $this->assertSame(['top', 'good'], array_column($two, 'id'));
+        $this->assertSame(0.80, $two[1]['score']);
+    }
+
+    public function test_hybrid_blend_ranks_a_non_cosine_metric_on_rank_score(): void {
+        // l2sq: rank_score = -distance. 'near' is nearest but the cosine of
+        // 'far' happens to be higher. The blend must normalise the metric the
+        // rows were ranked by, and return the cosine as the score.
+        $vector = [
+            ['id' => 'near', 'score' => 0.70, 'rank_score' => -0.1],
+            ['id' => 'far',  'score' => 0.99, 'rank_score' => -5.0],
+        ];
+        $out = MxChat_Plus_DuckDB_Vector_Store_Query::blend_hybrid($vector, [], 1.0, 2);
+        $this->assertSame(['near', 'far'], array_column($out, 'id'));
+        $this->assertSame([0.70, 0.99], array_column($out, 'score'));
+    }
+
+    public function test_hybrid_run_returns_cosine_scores_end_to_end(): void {
+        // Through run(): vector leg + BM25 leg both answered by the mock.
+        $GLOBALS['__test_filter_overrides']['mxchat_plus_duckdb_query_text'] = 'zebra';
+        try {
+            update_option('mxchat_plus_duckdb_options', array_merge(MxChat_Plus_DuckDB_Options::defaults(), [
+                'embedding_dim' => 3, 'hybrid_enabled' => true, 'hybrid_alpha' => 0.7, 'dedup_per_source' => false,
+            ]));
+            $conn = new class implements MxChat_Plus_DuckDB_Connection {
+                public array $log = [];
+                public function execute(string $sql, array $params = []): array {
+                    $this->log[] = $sql;
+                    if (stripos($sql, 'match_bm25') !== false) return [['id' => 'kw', 'score' => 3.0]];
+                    if (stripos($sql, "key = 'fts_available'") !== false) return [['value' => '1']];
+                    return [
+                        ['id' => 'top', 'score' => 0.12, 'text' => 'off topic best', 'source_url' => 'a'],
+                        ['id' => 'kw',  'score' => 0.10, 'text' => 'zebra', 'source_url' => 'b'],
+                    ];
+                }
+                public function ping(): bool { return true; }
+                public function identifier(): string { return 'mock:hybrid'; }
+                public function supports_capability(string $cap): bool { return true; }
+            };
+            $query = new MxChat_Plus_DuckDB_Vector_Store_Query($conn, 'mxchat_vectors', 3, 'cosine', 'float32');
+            $out = $query->run([0.1, 0.2, 0.3], 5, 'default', []);
+        } finally {
+            $GLOBALS['__test_filter_overrides'] = [];
+        }
+        $scores = array_column($out, 'score', 'id');
+        $this->assertSame(0.12, $scores['top'], 'an off-topic question stays below MxChat\'s threshold');
+        $this->assertSame(0.10, $scores['kw']);
+        $this->assertStringContainsString('match_bm25(row_key, ?)', implode("\n", $conn->log),
+            'BM25 looks rows up by the unique row_key (schema v4)');
+    }
+
+    // ─── topK ceiling + cache ceiling (#70) ──────────────────────────────
+
+    public function test_top_k_is_clamped_to_pinecone_limits(): void {
+        [$query, $conn] = $this->makeQuery();
+        $query->run([0.1, 0.2, 0.3], 50000, 'default', []);
+        $this->assertStringContainsString('LIMIT ' . MxChat_Plus_DuckDB_Vector_Store_Query::MAX_TOP_K, end($conn->log));
+
+        $query->run([0.1, 0.2, 0.3], 0, 'default', []);
+        $this->assertStringContainsString('LIMIT 1', end($conn->log), 'LIMIT 0 / negative never reaches SQL');
+    }
+
+    public function test_huge_sweeps_are_not_cached(): void {
+        // The host's content selector sends topK 10000 with a random vector
+        // three times per page load (MxChat 3.2.25): never repeated, so a
+        // transient per sweep only bloats wp_options.
+        [$query, $conn] = $this->makeQuery(['query_cache_enabled' => true, 'query_cache_ttl' => 300]);
+        $query->run([0.1, 0.2, 0.3], 10000, 'default', []);
+        $keys = array_filter(array_keys($GLOBALS['__test_transients']), fn($k) => strpos((string) $k, 'mxp_q_') === 0);
+        $this->assertSame([], $keys);
+
+        // The chat path (host clamps it to 1..1000) is still cached.
+        $query->run([0.1, 0.2, 0.3], 1000, 'default', []);
+        $keys = array_filter(array_keys($GLOBALS['__test_transients']), fn($k) => strpos((string) $k, 'mxp_q_') === 0);
+        $this->assertCount(1, $keys);
+    }
+
+    public function test_cache_ceiling_is_filterable(): void {
+        $GLOBALS['__test_filter_overrides']['mxchat_plus_duckdb_query_cache_max_top_k'] = 5;
+        try {
+            [$query] = $this->makeQuery(['query_cache_enabled' => true, 'query_cache_ttl' => 300]);
+            $query->run([0.1, 0.2, 0.3], 6, 'default', []);
+        } finally {
+            $GLOBALS['__test_filter_overrides'] = [];
+        }
+        $keys = array_filter(array_keys($GLOBALS['__test_transients']), fn($k) => strpos((string) $k, 'mxp_q_') === 0);
+        $this->assertSame([], $keys);
+    }
+
+    // ─── Metadata (#40 / #54 / #62) ──────────────────────────────────────
+
+    public function test_matches_carry_the_host_metadata_keys(): void {
+        $rows = [[
+            'id' => 'h_chunk_1', 'score' => 0.9, 'text' => 'b', 'source_url' => 'https://x/p',
+            'role_restriction' => 'public', 'type' => 'post', 'chunk_index' => 1, 'total_chunks' => 2,
+            'is_chunked' => true, 'bot_id' => 'default', 'title' => 'About Us', 'parent_url_hash' => 'p',
+            'created_unix' => 1700000000, 'last_updated_unix' => 1700000100, 'extra_metadata' => '{"lang":"fr"}',
+        ]];
+        [$query, $conn] = $this->makeQuery([], 3, $rows);
+        $out = $query->run([0.1, 0.2, 0.3], 5, 'default', []);
+        $meta = $out[0]['metadata'];
+        $this->assertSame('About Us', $meta['title'], 'the 3.2.23 page title an add-on reads for its source cards');
+        $this->assertSame(1700000100, $meta['last_updated'], "3.2.25 re-import's 'edited after import' test reads it");
+        $this->assertSame(1700000000, $meta['created_at']);
+        $this->assertSame('p', $meta['parent_url_hash']);
+        $this->assertSame('default', $meta['bot_id']);
+        $this->assertSame('fr', $meta['lang']);
+        $this->assertArrayNotHasKey('role_restriction', $meta);
+        $this->assertStringContainsString('title, parent_url_hash', $conn->log[0]);
+    }
 }

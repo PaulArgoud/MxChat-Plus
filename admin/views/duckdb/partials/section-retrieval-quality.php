@@ -9,7 +9,7 @@ if (!defined('ABSPATH')) { exit; }
         <td>
             <label>
                 <input type="checkbox" name="<?php echo esc_attr(MXCHAT_PLUS_DUCKDB_OPTION_KEY); ?>[hybrid_enabled]" value="1" <?php checked(!empty($opts['hybrid_enabled'])); ?>>
-                <?php esc_html_e('Blend BM25 full-text scores with vector similarity (requires the DuckDB FTS extension and a populated `mxchat_plus_duckdb_query_text` filter).', 'mxchat-plus'); ?>
+                <?php esc_html_e('Blend BM25 full-text scores with vector similarity to choose and order the matches; the score MxChat receives stays the cosine similarity. Requires the DuckDB FTS extension and the visitor\'s query text, which the Pinecone proxy (Option B) supplies on its own; on any other path, return it from the `mxchat_plus_duckdb_query_text` filter.', 'mxchat-plus'); ?>
             </label>
         </td>
     </tr>

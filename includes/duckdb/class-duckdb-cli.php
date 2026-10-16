@@ -6,14 +6,15 @@
  *   wp mxchat-plus stats             # vector count + metrics + last sync
  *   wp mxchat-plus sync               # full MySQL → DuckDB sync
  *   wp mxchat-plus reprocess          # walk WP posts through MxChat ingestion
- *   wp mxchat-plus compact            # run the orphan compactor now
+ *   wp mxchat-plus compact [--force]  # run the orphan compactor now
  *   wp mxchat-plus metrics --reset    # reset metrics counters
  *   wp mxchat-plus cache --flush      # flush the query result cache
  *   wp mxchat-plus export --path=…    # Parquet dump of every vector
  *   wp mxchat-plus import --path=…    # Parquet restore (INSERT OR REPLACE)
  *   wp mxchat-plus async-reprocess --post-types=post,page
  *                                       # enqueue every post into Action Scheduler
- *   wp mxchat-plus migrate-from-pinecone --api-key=… --host=… [--namespace=…]
+ *   wp mxchat-plus migrate-from-pinecone --api-key=… --host=… [--namespace=…|--all-namespaces]
+ *                                       [--index-type=auto|vector|document] [--bot-id=…] [--reset]
  *                                       # one-shot vector copy, no re-embedding
  */
 
@@ -192,11 +193,24 @@ class MxChat_Plus_DuckDB_CLI {
     /**
      * Run the orphan compactor immediately.
      *
+     * The compactor never prunes a bot the host writes through the Pinecone
+     * proxy, never runs before a first MySQL sync, and refuses to delete when
+     * the MySQL knowledge base is empty or when more than half of the
+     * scanned vectors look orphaned (filter
+     * `mxchat_plus_duckdb_compactor_max_orphan_ratio`).
+     *
+     * ## OPTIONS
+     *
+     * [--force]
+     * : Delete even when one of those two safety valves refuses (empty
+     *   knowledge base, orphan ratio). The proxy-written bots stay protected.
+     *
      * ## EXAMPLES
      *     wp mxchat-plus compact
+     *     wp mxchat-plus compact --force
      */
     public function compact(array $args, array $assoc_args): void { /* -param array<int, string> $args; -param array<string, string|true> $assoc_args */
-        $r = MxChat_Plus_DuckDB_Compactor::instance()->run();
+        $r = MxChat_Plus_DuckDB_Compactor::instance()->run(isset($assoc_args['force']));
         if (!empty($r['ok'])) {
             \WP_CLI::success(sprintf('Pruned %d orphan vectors.', (int) ($r['deleted'] ?? 0)));
         } else {
@@ -336,32 +350,72 @@ class MxChat_Plus_DuckDB_CLI {
      * Migrate vectors from a Pinecone index into DuckDB. No re-embedding —
      * pulls existing vectors + metadata directly.
      *
+     * Reads a classic vector index (GET /vectors/list + /vectors/fetch) or a
+     * MxChat 3.2.22+ document index (/namespaces/{ns}/documents/*). Each row
+     * lands under --bot-id when given, else the vector's own metadata.bot_id,
+     * else the namespace, else `default`. Resumable: re-running the same
+     * command continues where a failed run stopped.
+     *
      * ## OPTIONS
      * --api-key=<key>
      * --host=<host>
      * : The Pinecone index host (e.g. my-index-abcd.svc.us-east1-aws.pinecone.io).
      *
      * [--namespace=<ns>]
+     * : Namespace to copy. Omit it for the default namespace (Pinecone and
+     *   MxChat name it with the empty string, not "default").
+     *
+     * [--all-namespaces]
+     * : Copy every namespace the index reports (describe_index_stats),
+     *   the default one first.
+     *
+     * [--index-type=<type>]
+     * : auto (default), vector or document. `auto` asks MxChat (3.2.22+)
+     *   whether the host is a document index and assumes vector otherwise.
+     *
+     * [--bot-id=<id>]
+     * : Store every copied vector under this DuckDB bot id.
+     *
+     * [--reset]
+     * : Forget a saved cursor and start from the beginning.
      *
      * ## EXAMPLES
      *     wp mxchat-plus migrate-from-pinecone \
      *         --api-key=pcsk_... \
-     *         --host=my-index-abcd.svc.us-east1-aws.pinecone.io \
-     *         --namespace=default
+     *         --host=my-index-abcd.svc.us-east1-aws.pinecone.io
+     *     wp mxchat-plus migrate-from-pinecone --api-key=pcsk_... --host=... --all-namespaces
+     *     wp mxchat-plus migrate-from-pinecone --api-key=pcsk_... --host=... --index-type=document --namespace=sales --bot-id=sales
      */
     public function migrate_from_pinecone(array $args, array $assoc_args): void { /* -param array<int, string> $args; -param array<string, string|true> $assoc_args */
         $api_key = (string) ($assoc_args['api-key'] ?? '');
         $host    = (string) ($assoc_args['host'] ?? '');
-        $ns      = (string) ($assoc_args['namespace'] ?? '');
+        $ns      = isset($assoc_args['namespace']) && $assoc_args['namespace'] !== true ? (string) $assoc_args['namespace'] : '';
+        $type    = isset($assoc_args['index-type']) && $assoc_args['index-type'] !== true ? (string) $assoc_args['index-type'] : MxChat_Plus_DuckDB_Pinecone_Migrator::INDEX_TYPE_AUTO;
+        $bot_id  = isset($assoc_args['bot-id']) && $assoc_args['bot-id'] !== true ? sanitize_key((string) $assoc_args['bot-id']) : '';
         if ($api_key === '' || $host === '') {
             \WP_CLI::error('Both --api-key=<key> and --host=<host> are required.');
         }
+        if (isset($assoc_args['all-namespaces']) && isset($assoc_args['namespace'])) {
+            \WP_CLI::error('Pass either --namespace=<ns> or --all-namespaces, not both.');
+        }
+        if (isset($assoc_args['reset'])) {
+            delete_option(MxChat_Plus_DuckDB_Pinecone_Migrator::STATE_OPTION);
+            \WP_CLI::log('Saved migration cursor cleared.');
+        }
         try {
-            $migrator = new MxChat_Plus_DuckDB_Pinecone_Migrator($api_key, $host, $ns);
-            $r = $migrator->run(function ($copied) {
+            $migrator = new MxChat_Plus_DuckDB_Pinecone_Migrator($api_key, $host, $ns, $type, $bot_id);
+            $progress = function ($copied) {
                 \WP_CLI::log(sprintf('… copied %d so far', $copied));
-            });
-            \WP_CLI::success(sprintf('Migration complete: %d copied, %d failed.', $r['copied'], $r['failed']));
+            };
+            if (isset($assoc_args['all-namespaces'])) {
+                $r = $migrator->run_all_namespaces($progress);
+                foreach ($r['namespaces'] as $name => $one) {
+                    \WP_CLI::log(sprintf('Namespace %s: %d copied, %d failed.', $name === '' ? '(default)' : $name, $one['copied'], $one['failed']));
+                }
+            } else {
+                $r = $migrator->run($progress);
+            }
+            \WP_CLI::success(sprintf('Migration complete (%s index): %d copied, %d failed.', $r['index_type'], $r['copied'], $r['failed']));
         } catch (\Throwable $e) {
             \WP_CLI::error($e->getMessage());
         }

@@ -21,7 +21,8 @@
  *   - tables on MotherDuck. This script never makes a network call. To remove
  *     remote data, open app.motherduck.com and run
  *     `DROP TABLE IF EXISTS mxchat_vectors; DROP TABLE IF EXISTS mxchat_plus_duckdb_schema_meta;`
- *     against the configured database.
+ *     against the configured database (plus `mxchat_vectors_v4_staging`, if a
+ *     schema v4 rebuild was ever interrupted there).
  */
 
 if (!defined('WP_UNINSTALL_PLUGIN')) {
@@ -115,6 +116,8 @@ function mxchat_plus_duckdb_uninstall_cleanup_site(bool $delete_data): void {
         'mxchat_plus_duckdb_cache_gen',                  // O(1) cache-invalidation counter (v0.6.0+)
         'mxchat_plus_duckdb_reprocess_state',            // Action Scheduler reprocess snapshot (v0.4.0+)
         'mxchat_plus_duckdb_pinecone_migration_state',   // resumable Pinecone import token (v0.4.0+)
+        'mxchat_plus_duckdb_pinecone_imported',          // durable "vectors came from Pinecone" marker (compactor guard)
+        'mxchat_plus_duckdb_proxy_written_bots',         // bots the host writes through the proxy (compactor guard, 1.0.0+)
         'mxchat_plus_duckdb_delete_data_on_uninstall',   // opt-in flag itself
         'mxchat_plus_duckdb_mirror_status',              // mirror lifecycle status (v0.10.0+)
         'mxchat_plus_duckdb_mirror_bootstrap_state',     // resumable mirror bootstrap state (v0.10.0+)
@@ -138,6 +141,10 @@ function mxchat_plus_duckdb_uninstall_cleanup_site(bool $delete_data): void {
 
     // ── Named transient ─────────────────────────────────────────────────
     delete_transient('mxchat_plus_duckdb_search_error');
+
+    // ── Schema v4 rebuild locks (MxChat_Plus_DuckDB_Vector_Store_Schema::V4_LOCK_PREFIX),
+    // left behind only by a request that died mid-rebuild.
+    $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'mxchat\\_plus\\_duckdb\\_v4\\_lock\\_%' ESCAPE '\\\\'");
 
     // ── Wildcard transients (rate-limit window + query cache) ───────────
     // The transient row name pattern is _transient_<name> and _transient_timeout_<name>.

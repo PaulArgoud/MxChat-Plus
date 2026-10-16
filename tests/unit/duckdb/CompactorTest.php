@@ -15,7 +15,13 @@ use PHPUnit\Framework\TestCase;
  *     install from blowing through MotherDuck billing;
  *   - the MySQL KB scan is paginated so a 100k-row KB doesn't allocate
  *     ~20 MB of $wpdb row objects in one shot (v0.6.0 fix);
- *   - orphans get deleted, alive vectors stay.
+ *   - orphans get deleted, alive vectors stay;
+ *   - bots the host writes through the Pinecone proxy are never pruned
+ *     (they have no MySQL rows at all), a never-synced install is never
+ *     pruned, and an empty alive set or an implausible orphan ratio refuses
+ *     the run unless `--force`;
+ *   - deletes are scoped to (bot_id, vector_id) — schema v4 holds one copy
+ *     of an md5(url) id per bot — and invalidate that bot's query cache.
  */
 final class CompactorTest extends TestCase {
 
@@ -28,6 +34,8 @@ final class CompactorTest extends TestCase {
         // Per-bot cache generations live on the Plugin stub; reset so the
         // sweep tests start from a known map (and don't inherit a prior test's).
         MxChat_Plus_DuckDB_Cache::$cache_gen_map = [];
+        MxChat_Plus_DuckDB_Compactor::reset_noted_cache();
+        MxChat_Utils::$forgotten_signatures = [];
 
         $this->wpdb = new MxChat_Test_WPDB();
         $this->wpdb->prefix = 'wp_c' . bin2hex(random_bytes(3)) . '_';
@@ -41,13 +49,18 @@ final class CompactorTest extends TestCase {
         $this->mock_conn = new class('mock:compactor') extends MxChat_Test_RecordingConnection {
             public array $pages = [];
             public int $page_index = 0;
+            /** @var array<int, array{bot_id: string}> answer to list_bot_ids() */
+            public array $bot_rows = [];
             public function execute(string $sql, array $params = []): array {
                 $this->log[] = $sql;
                 if (stripos($sql, 'schema_meta') !== false && stripos($sql, 'SELECT value') !== false) {
-                    return [['value' => '3']];
+                    return [['value' => (string) MxChat_Plus_DuckDB_Vector_Store_Schema::TARGET_SCHEMA_VERSION]];
                 }
-                if (stripos($sql, 'SELECT vector_id FROM') !== false) {
+                if (stripos($sql, 'SELECT vector_id, bot_id, source_url, content_type FROM') !== false) {
                     return $this->pages[$this->page_index++] ?? [];
+                }
+                if (stripos($sql, 'SELECT DISTINCT bot_id') !== false) {
+                    return $this->bot_rows;
                 }
                 return [];
             }
@@ -220,7 +233,9 @@ final class CompactorTest extends TestCase {
 
         $GLOBALS['__test_filter_overrides']['mxchat_plus_duckdb_compactor_max_deletes'] = 100;
         try {
-            $result = $this->compactor()->run();
+            // --force: the empty-KB safety valve would otherwise refuse
+            // before the cap is ever exercised.
+            $result = $this->compactor()->run(true);
         } finally {
             $GLOBALS['__test_filter_overrides'] = [];
         }
@@ -355,11 +370,11 @@ final class CompactorTest extends TestCase {
         }
         $this->mock_conn->pages = [$first, [['vector_id' => 'orphan-1000']], []];
 
-        $this->compactor()->run();
+        $this->compactor()->run(true);
 
         $scans = array_values(array_filter(
             $this->mock_conn->log,
-            fn($sql) => stripos($sql, 'SELECT vector_id FROM') !== false
+            fn($sql) => stripos($sql, 'SELECT vector_id, bot_id, source_url, content_type FROM') !== false
         ));
         $this->assertNotEmpty($scans);
 
@@ -373,8 +388,11 @@ final class CompactorTest extends TestCase {
         // The follow-up page must resume from the last id actually seen — not
         // from a positional offset that the interleaved DELETEs have shifted.
         $this->assertArrayHasKey(1, $scans, 'a full page must be followed by another scan');
-        $this->assertStringContainsStringIgnoringCase('WHERE vector_id >', $scans[1]);
-        $this->assertStringContainsString("'orphan-0999'", $scans[1]);
+        // The cursor is the (vector_id, bot_id) pair: under schema v4 the
+        // same id exists once per bot, and a cursor on vector_id alone would
+        // skip the other bots' copy at a page boundary.
+        $this->assertStringContainsString("(vector_id > 'orphan-0999' OR (vector_id = 'orphan-0999' AND bot_id > 'default'))", $scans[1]);
+        $this->assertStringContainsString('ORDER BY vector_id, bot_id', $scans[1]);
     }
 
     /**
@@ -394,7 +412,7 @@ final class CompactorTest extends TestCase {
 
         $GLOBALS['__test_filter_overrides']['mxchat_plus_duckdb_compactor_max_deletes'] = 150;
         try {
-            $result = $this->compactor()->run();
+            $result = $this->compactor()->run(true);
         } finally {
             unset($GLOBALS['__test_filter_overrides']['mxchat_plus_duckdb_compactor_max_deletes']);
         }
@@ -408,6 +426,212 @@ final class CompactorTest extends TestCase {
             }
         }
         $this->assertSame(150, $ids_deleted, 'no id may be deleted beyond the ceiling');
+    }
+
+    // ─── Proxy-written bots, safety valves, scoped deletes ───────────────
+
+    /** Alive set of one KB row, so the empty-KB valve stays out of the way. */
+    private function oneAliveRow(): string {
+        $row = (object) ['id' => 1, 'source_url' => 'https://example.com/alive'];
+        $this->wpdb->set_response('SELECT id, url AS source_url', function ($sql) use ($row) {
+            return (stripos($sql, 'OFFSET 0') !== false) ? [$row] : [];
+        });
+        return MxChat_Plus_DuckDB_Sync::vector_id_for_row($row);
+    }
+
+    private function scanSql(): string {
+        foreach ($this->mock_conn->log as $sql) {
+            if (stripos($sql, 'SELECT vector_id, bot_id, source_url, content_type FROM') !== false) return $sql;
+        }
+        return '';
+    }
+
+    public function test_never_synced_install_is_never_pruned(): void {
+        // last_sync_at = 0 used to skip the freshness guard entirely (an
+        // empty() check), so the first hour after enabling — when the alive
+        // set is still empty — was the most dangerous one.
+        update_option('mxchat_plus_duckdb_options', array_merge(MxChat_Plus_DuckDB_Options::defaults(), [
+            'enabled' => true, 'embedding_dim' => 3, 'last_sync_at' => 0,
+        ]));
+        $this->mock_conn->pages = [[['vector_id' => 'x']], []];
+
+        $result = $this->compactor()->run(true);
+
+        $this->assertFalse($result['ok']);
+        $this->assertSame('never synced', $result['reason']);
+        $this->assertEmpty($this->mock_conn->log, '--force never overrides the sync guards');
+    }
+
+    public function test_bots_written_through_the_proxy_are_never_scanned(): void {
+        // In Pinecone mode MxChat writes ONLY to the vector store
+        // (store_in_pinecone_only), so a proxy-written bot has no MySQL row
+        // and every one of its vectors would look orphaned.
+        $this->oneAliveRow();
+        MxChat_Plus_DuckDB_Compactor::note_proxy_write('sales');
+        $this->mock_conn->pages = [[
+            ['vector_id' => 'sales-only', 'bot_id' => 'sales'],
+            ['vector_id' => 'orphan', 'bot_id' => 'default'],
+        ], []];
+
+        $result = $this->compactor()->run();
+
+        $this->assertTrue($result['ok']);
+        $this->assertStringContainsString("bot_id NOT IN ('sales')", $this->scanSql());
+        $this->assertSame(1, $result['deleted'], 'a proxy-written row slipping through is still skipped');
+        $log = implode("\n", $this->mock_conn->log);
+        $this->assertStringNotContainsString("'sales-only'", $log);
+    }
+
+    public function test_takeover_protects_the_default_bot_and_is_remembered(): void {
+        $this->oneAliveRow();
+        update_option('mxchat_plus_duckdb_options', array_merge(MxChat_Plus_DuckDB_Options::defaults(), [
+            'enabled' => true, 'embedding_dim' => 3, 'last_sync_at' => time() - 7200,
+            'takeover_default_bot_pinecone' => true,
+        ]));
+        $this->mock_conn->pages = [[['vector_id' => 'orphan', 'bot_id' => 'other']], []];
+
+        $this->compactor()->run();
+
+        $this->assertStringContainsString("bot_id NOT IN ('default')", $this->scanSql());
+        // The one-time seed recorded 'default' durably: turning the takeover
+        // off later must not expose the vectors it wrote.
+        $this->assertSame(['default'], MxChat_Plus_DuckDB_Compactor::proxy_written_bots());
+        $state = get_option(MxChat_Plus_DuckDB_Compactor::PROXY_WRITTEN_OPTION);
+        $this->assertGreaterThan(0, (int) ($state['seeded_at'] ?? 0));
+    }
+
+    public function test_the_first_run_protects_every_non_default_bot_already_stored(): void {
+        // Installs that wrote through the proxy before note_proxy_write()
+        // existed: the host only writes a non-default bot through the proxy,
+        // so those vectors have no MySQL row. The seed runs once.
+        $this->oneAliveRow();
+        $this->mock_conn->bot_rows = [['bot_id' => 'default'], ['bot_id' => 'legacy_bot']];
+        $this->mock_conn->pages = [[['vector_id' => 'orphan', 'bot_id' => 'default']], []];
+
+        $this->compactor()->run();
+
+        $this->assertStringContainsString("bot_id NOT IN ('legacy_bot')", $this->scanSql());
+        $this->assertSame(['legacy_bot'], MxChat_Plus_DuckDB_Compactor::proxy_written_bots());
+
+        // A bot that appears later (e.g. MySQL-synced) is not seeded again.
+        $this->mock_conn->bot_rows = [['bot_id' => 'legacy_bot'], ['bot_id' => 'new_bot']];
+        $this->mock_conn->page_index = 0;
+        $this->mock_conn->log = [];
+        $this->compactor()->run();
+        $this->assertSame(['legacy_bot'], MxChat_Plus_DuckDB_Compactor::proxy_written_bots());
+    }
+
+    public function test_note_proxy_write_writes_the_option_once_per_bot(): void {
+        MxChat_Plus_DuckDB_Compactor::note_proxy_write('sales');
+        $first = get_option(MxChat_Plus_DuckDB_Compactor::PROXY_WRITTEN_OPTION);
+        $this->assertArrayHasKey('sales', $first['bots']);
+
+        // A later request (memo reset) finds the bot already recorded and
+        // must not rewrite the option.
+        MxChat_Plus_DuckDB_Compactor::reset_noted_cache();
+        update_option(MxChat_Plus_DuckDB_Compactor::PROXY_WRITTEN_OPTION, ['bots' => ['sales' => 123], 'seeded_at' => 0]);
+        MxChat_Plus_DuckDB_Compactor::note_proxy_write('sales');
+        $this->assertSame(123, get_option(MxChat_Plus_DuckDB_Compactor::PROXY_WRITTEN_OPTION)['bots']['sales']);
+
+        MxChat_Plus_DuckDB_Compactor::note_proxy_write('');
+        $this->assertSame(['default', 'sales'], MxChat_Plus_DuckDB_Compactor::proxy_written_bots(),
+            "an empty namespace is the 'default' bot");
+    }
+
+    public function test_empty_knowledge_base_refuses_to_prune(): void {
+        $this->wpdb->set_response('SELECT id, url AS source_url', function () { return []; });
+        $this->mock_conn->pages = [[['vector_id' => 'a'], ['vector_id' => 'b']], []];
+
+        $result = $this->compactor()->run();
+
+        $this->assertFalse($result['ok']);
+        $this->assertStringContainsString('refused to prune', $result['reason']);
+        $this->assertStringContainsString('refused to prune', MxChat_Plus_DuckDB_Options::get()['last_error']);
+        $deletes = array_filter($this->mock_conn->log, fn($sql) => stripos($sql, 'DELETE FROM') !== false);
+        $this->assertEmpty($deletes);
+
+        // --force deletes anyway.
+        $this->mock_conn->page_index = 0;
+        $forced = $this->compactor()->run(true);
+        $this->assertTrue($forced['ok']);
+        $this->assertSame(2, $forced['deleted']);
+    }
+
+    public function test_implausible_orphan_ratio_refuses_to_prune(): void {
+        $alive = $this->oneAliveRow();
+        $page = [['vector_id' => $alive]];
+        for ($i = 0; $i < 20; $i++) $page[] = ['vector_id' => 'orphan-' . $i];
+        $this->mock_conn->pages = [$page, []];
+
+        $result = $this->compactor()->run();
+        $this->assertFalse($result['ok']);
+        $this->assertStringContainsString('20 of 21', $result['reason']);
+
+        // A site that knows better raises the ratio.
+        $this->mock_conn->page_index = 0;
+        $GLOBALS['__test_filter_overrides']['mxchat_plus_duckdb_compactor_max_orphan_ratio'] = 1.0;
+        try {
+            $ok = $this->compactor()->run();
+        } finally {
+            unset($GLOBALS['__test_filter_overrides']['mxchat_plus_duckdb_compactor_max_orphan_ratio']);
+        }
+        $this->assertTrue($ok['ok']);
+        $this->assertSame(20, $ok['deleted']);
+    }
+
+    public function test_deletes_are_scoped_to_the_bot_and_flush_its_cache(): void {
+        $this->oneAliveRow();
+        $this->mock_conn->pages = [[
+            ['vector_id' => 'shared', 'bot_id' => 'default'],
+            ['vector_id' => 'shared', 'bot_id' => 'support'],
+        ], []];
+
+        $result = $this->compactor()->run();
+
+        $this->assertSame(2, $result['deleted']);
+        $deletes = array_values(array_filter($this->mock_conn->log, fn($sql) => stripos($sql, 'DELETE FROM') !== false));
+        $this->assertCount(2, $deletes, 'one DELETE per bot');
+        $this->assertStringContainsString("WHERE bot_id = 'default' AND vector_id IN ('shared')", $deletes[0]);
+        $this->assertStringContainsString("WHERE bot_id = 'support' AND vector_id IN ('shared')", $deletes[1]);
+        $this->assertSame(2, MxChat_Plus_DuckDB_Cache::cache_generation('default'),
+            'cached top-Ks must stop serving deleted vectors');
+        $this->assertSame(2, MxChat_Plus_DuckDB_Cache::cache_generation('support'));
+    }
+
+    public function test_pruned_attachments_lose_their_media_signature(): void {
+        // MxChat 3.2.22+ skips re-embedding an attachment whose signature is
+        // unchanged; a deletion the host did not make must clear it, or the
+        // file is never indexed again (the 3.2.24 bug, on our side).
+        $this->oneAliveRow();
+        $this->mock_conn->pages = [[
+            ['vector_id' => 'f1_chunk_0', 'bot_id' => 'default', 'source_url' => 'https://example.com/f.pdf', 'content_type' => 'attachment'],
+            ['vector_id' => 'f1_chunk_1', 'bot_id' => 'default', 'source_url' => 'https://example.com/f.pdf', 'content_type' => 'attachment'],
+            ['vector_id' => 'post', 'bot_id' => 'default', 'source_url' => 'https://example.com/post', 'content_type' => 'post'],
+        ], []];
+
+        $this->compactor()->run();
+
+        $this->assertSame(
+            [['source_url' => 'https://example.com/f.pdf', 'bot_id' => 'default']],
+            MxChat_Utils::$forgotten_signatures,
+            'once per URL, attachments only'
+        );
+    }
+
+    public function test_signature_is_kept_when_the_default_bot_lives_on_a_real_pinecone_index(): void {
+        // Takeover off + real Pinecone credentials: our copy is not the
+        // authoritative store, and the signature vouches for the real entry.
+        update_option('mxchat_pinecone_addon_options', [
+            'mxchat_use_pinecone' => '1', 'mxchat_pinecone_api_key' => 'pcsk', 'mxchat_pinecone_host' => 'h',
+        ]);
+        $this->oneAliveRow();
+        $this->mock_conn->pages = [[
+            ['vector_id' => 'f1', 'bot_id' => 'default', 'source_url' => 'https://example.com/f.pdf', 'content_type' => 'attachment'],
+        ], []];
+
+        $this->compactor()->run();
+
+        $this->assertSame([], MxChat_Utils::$forgotten_signatures);
     }
 
     /**

@@ -152,41 +152,92 @@ class MxChat_Plus_Admin {
     }
 
     /**
-     * The two silent-failure conditions that generate most support questions.
-     * Neither is an error we can fix from here, so we state them plainly.
+     * The silent-failure conditions that generate most support questions.
+     * None is an error we can fix from here, so we state them plainly.
      */
     private function render_environment_notes(): void {
         echo '<h2>' . esc_html__('Environment', 'mxchat-plus') . '</h2>';
         echo '<table class="widefat striped" style="max-width:60em"><tbody>';
+        foreach (self::environment_rows() as [$label, $html]) {
+            // environment_rows() escapes every value at the source.
+            printf('<tr><td>%s</td><td>%s</td></tr>', esc_html($label), $html); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+        }
+        echo '</tbody></table>';
+    }
+
+    /**
+     * The Environment table, as [label, escaped HTML] rows. Separate from the
+     * rendering so the wording logic can be tested without WordPress.
+     *
+     * @return list<array{0:string, 1:string}>
+     */
+    public static function environment_rows(): array {
+        $rows = [];
 
         $host_version = MxChat_Plus_Host::version();
-        printf(
-            '<tr><td>%s</td><td>%s</td></tr>',
-            esc_html__('MxChat version', 'mxchat-plus'),
-            $host_version !== '' ? esc_html($host_version) : esc_html__('unknown', 'mxchat-plus')
-        );
+        $version_html = $host_version !== '' ? esc_html($host_version) : esc_html__('unknown', 'mxchat-plus');
+        switch (MxChat_Plus_Host::version_status($host_version)) {
+            case 'below_minimum':
+                $version_html .= ' — <strong>' . esc_html(sprintf(
+                    /* translators: %s: oldest supported MxChat version, e.g. 3.2.21 */
+                    __('older than %s, the oldest MxChat version MxChat Plus supports. Some modules may not attach until MxChat is updated.', 'mxchat-plus'),
+                    MxChat_Plus_Host::MINIMUM
+                )) . '</strong>';
+                break;
+            case 'newer_than_tested':
+                $version_html .= ' — ' . esc_html(sprintf(
+                    /* translators: %s: last MxChat version MxChat Plus was checked against, e.g. 3.2.25 */
+                    __('newer than %s, the last MxChat version MxChat Plus was checked against. It usually keeps working; if a module misbehaves, check the MxChat changelog first.', 'mxchat-plus'),
+                    MxChat_Plus_Host::TESTED_UP_TO
+                ));
+                break;
+        }
+        $rows[] = [__('MxChat version', 'mxchat-plus'), $version_html];
 
-        if (MxChat_Plus_Modules::is_enabled(MxChat_Plus_Modules::PROMPTCACHE)) {
-            $streaming = MxChat_Plus_Host::streaming_enabled();
-            printf(
-                '<tr><td>%s</td><td>%s</td></tr>',
-                esc_html__('MxChat streaming', 'mxchat-plus'),
-                $streaming
-                    ? '<strong>' . esc_html__('On — prompt caching cannot apply to the main chat.', 'mxchat-plus') . '</strong> '
-                      . esc_html__('Streaming responses are sent with curl_exec, which bypasses the WordPress HTTP API, so no filter can reach them. Turn streaming off in MxChat settings to cache the main chat.', 'mxchat-plus')
-                    : esc_html__('Off — the main chat goes through the WordPress HTTP API and can be cached.', 'mxchat-plus')
-            );
-
-            if (MxChat_Plus_Host::has_native_prompt_cache()) {
-                printf(
-                    '<tr><td>%s</td><td>%s</td></tr>',
-                    esc_html__('Native prompt cache', 'mxchat-plus'),
-                    esc_html__('MxChat already marks its system prompt for caching. This module does not duplicate that breakpoint — it adds the ones MxChat leaves out (tool definitions, conversation history) and the 1-hour TTL.', 'mxchat-plus')
-                );
-            }
+        if (!MxChat_Plus_Modules::is_enabled(MxChat_Plus_Modules::PROMPTCACHE)) {
+            return $rows;
         }
 
-        echo '</tbody></table>';
+        $native = MxChat_Plus_Host::has_native_prompt_cache();
+        if (MxChat_Plus_Host::streaming_enabled()) {
+            $parts = [
+                '<strong>' . esc_html__('On — this module cannot add its breakpoints to streamed replies.', 'mxchat-plus') . '</strong>',
+                esc_html__('Streaming responses are sent with curl_exec, which bypasses the WordPress HTTP API, so no filter can reach them.', 'mxchat-plus'),
+            ];
+            if ($native) {
+                // The streamed payload still carries the host's own marker:
+                // MxChat_Integrator::mxchat_generate_response_claude_stream()
+                // builds its system with mxchat_anthropic_system_blocks() (3.2.21+).
+                $parts[] = esc_html__("MxChat's own system-prompt breakpoint still applies to them (5-minute TTL); only this module's additions — history breakpoints and the 1-hour TTL — are lost.", 'mxchat-plus');
+            }
+            if (MxChat_Plus_Host::ai_tools_route_claude()) {
+                $options = get_option('mxchat_options', []);
+                $model   = is_array($options) && isset($options['model']) && is_string($options['model']) ? $options['model'] : '';
+                $parts[] = MxChat_Plus_Host::keeps_first_hop_text($model)
+                    ? esc_html__('AI Tools are active with a Claude model: MxChat answers most turns through its buffered tool loop (wp_remote_post), which this module does cache, even with streaming on. Turns that fall back to streaming are not cached.', 'mxchat-plus')
+                    : esc_html__("AI Tools are active with a Claude model: turns where Claude calls a tool go through MxChat's buffered tool loop (wp_remote_post) and are cached; the other turns stream and are not. Turn streaming off in MxChat settings to cache them too.", 'mxchat-plus');
+            } else {
+                $parts[] = esc_html__('Turn streaming off in MxChat settings to cache the main chat.', 'mxchat-plus');
+            }
+            $streaming_html = implode(' ', $parts);
+        } else {
+            $streaming_html = esc_html__('Off — the main chat goes through the WordPress HTTP API and can be cached.', 'mxchat-plus');
+        }
+        if (class_exists('MxChat_Multi_Bot_Core_Manager')) {
+            // Host literal: the multi-bot add-on's class, the same probe
+            // MxChat_Integrator::get_system_instructions() uses (MxChat 3.2.25).
+            $streaming_html .= ' ' . esc_html__('This reflects the global MxChat settings; a bot with its own settings can differ.', 'mxchat-plus');
+        }
+        $rows[] = [__('MxChat streaming', 'mxchat-plus'), $streaming_html];
+
+        if ($native) {
+            $rows[] = [
+                __('Native prompt cache', 'mxchat-plus'),
+                esc_html__('MxChat already marks its system prompt for caching, which also covers the AI Tools definitions sent before it. This module does not duplicate that breakpoint. It adds a rolling pair of breakpoints on the conversation history, a tool-definitions breakpoint that keeps tools cached when the system prompt varies ({context}, {visitor_name}, {current_date}, {current_datetime}), and the 1-hour TTL.', 'mxchat-plus'),
+            ];
+        }
+
+        return $rows;
     }
 
     public function handle_save_modules(): void {

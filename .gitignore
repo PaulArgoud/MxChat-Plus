@@ -36,3 +36,6 @@
 # Logs
 *.log
 debug.log
+
+# JS dev tooling of the opt-in DOM tests (tests/unit/transcripts/js/)
+node_modules/

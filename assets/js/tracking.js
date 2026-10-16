@@ -1,19 +1,22 @@
 /**
  * Matomo / GA4 events for clicks inside chatbot answers and on suggested
- * questions.
+ * questions — and, opt-in, for the chat window being opened.
  *
  * MxChat already logs *some* of this server-side, into
- * {$wpdb->prefix}mxchat_url_clicks, but only for absolute http(s) links
- * (mxchat-basic/js/chat-script.js:2188): relative links and suggested questions
- * are invisible to it, and it records nothing about internal vs external. This
- * script is the client-side half that fills those gaps, and it reports to the
- * analytics stack the site already runs rather than to a table of ours.
+ * {$wpdb->prefix}mxchat_url_clicks, but only for absolute http(s) links: both
+ * attachLinkTracking() and its delegated fallback on `.chat-box a[href]` gate
+ * on `href.startsWith('http://' | 'https://')` (js/chat-script.js, MxChat
+ * 3.2.25). Relative links and suggested questions are invisible to it, and it
+ * records nothing about internal vs external. This script is the client-side
+ * half that fills those gaps, and it reports to the analytics stack the site
+ * already runs rather than to a table of ours.
  *
  * Two host behaviours shape everything below and are documented at their call
  * sites: the host binds its own handler directly on each <a> and stops
- * propagation (so we must listen in the CAPTURE phase), and it navigates
- * programmatically from its own AJAX callback (so we must never cancel an
- * event).
+ * propagation (so we must listen in the CAPTURE phase), and since MxChat
+ * 3.2.24 it never cancels a link click — the browser follows the anchor itself
+ * while the host records the click with sendBeacon — so nothing navigates on
+ * the visitor's behalf any more, and we must never cancel an event either.
  *
  * Loaded with no dependencies: it runs whether or not jQuery, Matomo or gtag
  * are on the page, and degrades to doing nothing when a destination is missing.
@@ -40,6 +43,9 @@
     var trackMatomo   = readBool(cfg.trackMatomo, true);
     var trackGa4      = readBool(cfg.trackGa4, false);
     var sendSessionId = readBool(cfg.sendSessionId, true);
+    // Opt-in, and off for a stale payload that predates the key: turning it on
+    // adds a new action to the site's existing Matomo reports.
+    var trackChatOpen = readBool(cfg.trackChatOpen, false);
     var debug         = readBool(cfg.debug, false);
 
     // 0 means "no custom dimension configured"; so does an unparseable value.
@@ -70,11 +76,13 @@
      * they are the row keys of the user's existing Matomo reports. Translating
      * them — or passing them through any i18n layer — would start a fresh set
      * of rows and fork the history in two at the day of the update. They stay
-     * in French, exactly as the standalone plugin wrote them.
+     * in French, exactly as the standalone plugin wrote them, and any new one
+     * follows the same convention.
      */
     var ACTION_INTERNAL   = 'Clic lien interne';
     var ACTION_EXTERNAL   = 'Clic lien externe';
     var ACTION_SUGGESTION = 'Clic suggestion';
+    var ACTION_OPEN       = 'Ouverture chat';
 
     function log() {
         if (!debug) {
@@ -132,15 +140,17 @@
      * WAS BROKEN: the standalone version walked up to `[id^="chat-box-"]` and
      * stripped the prefix. That finds nothing for a suggested question, because
      * #mxchat-popular-questions-{botId} is a SIBLING of #chat-box-{botId} and
-     * not a child of it (mxchat-basic/includes/class-mxchat-public.php:366-370)
-     * — so on a multi-bot page every suggestion event was filed under the wrong
+     * not a child of it (render_chatbot_shortcode() prints it after the chat
+     * box's closing tag, includes/class-mxchat-public.php, MxChat 3.2.25) — so
+     * on a multi-bot page every suggestion event was filed under the wrong
      * bot, or under none.
      *
-     * The host exports its own resolver for add-ons
-     * (mxchat-basic/js/chat-script.js:4432); it walks .mxchat-chatbot-wrapper
-     * and also knows the floating and pre-chat containers, so it is the single
-     * source of truth. The rest are fallbacks for the window in which our
-     * script is live but the host's has not finished booting.
+     * The host exports its own resolver for add-ons (window.getBotIdFromElement,
+     * assigned at the end of chat-script.js's ready handler, MxChat 3.2.25); it
+     * walks .mxchat-chatbot-wrapper and also knows the floating and pre-chat
+     * containers, so it is the single source of truth. The rest are fallbacks
+     * for the window in which our script is live but the host's has not
+     * finished booting.
      */
     function botIdFor(el) {
         if (typeof window.getBotIdFromElement === 'function') {
@@ -197,17 +207,14 @@
         }
 
         // The host writes these sentinels when an earlier write failed, and
-        // guards against them itself (mxchat-basic/js/chat-script.js:228).
-        // They are strings, so a truthiness test alone lets them through as if
-        // they were a real session id.
+        // guards against them itself (MxChatInstances.getChatSession(),
+        // js/chat-script.js, MxChat 3.2.25). They are strings, so a truthiness
+        // test alone lets them through as if they were a real session id.
         if (value === 'null' || value === 'undefined') {
             value = '';
         }
         return value;
     }
-
-    // Only ever holds ids that were actually resolved; see below.
-    var sessionCache = {};
 
     /**
      * The session id we are allowed to report, or '' when there is none.
@@ -215,7 +222,7 @@
      * Gated at the source rather than at each send site: when send_session_id
      * is off, no id must reach Matomo or GA4 by any route — no custom
      * dimension, no " [session: …]" suffix, no GA4 field. Returning '' here
-     * makes that structurally true instead of depending on three call sites
+     * makes that structurally true instead of depending on every call site
      * remembering the setting.
      *
      * WAS BROKEN, twice: the standalone version read the cookie itself, which
@@ -224,14 +231,23 @@
      * empty session ids. And it fell back to a hardcoded
      * 'mxchat_session_id_default', which on a multi-bot page attributes one
      * bot's clicks to another bot's conversation. window.getChatSession()
-     * (exported at mxchat-basic/js/chat-script.js:4426) covers both.
+     * (exported for add-ons at the end of chat-script.js's ready handler,
+     * MxChat 3.2.25) covers both.
+     *
+     * Looked up afresh on every event, never cached. The host replaces the id
+     * when the visitor starts a new chat (resetChatSession()) and when the
+     * server asks for a silent reset (MxChatInstances.silentResetSession()); a
+     * cached copy would go on filing events under the conversation that had
+     * just ended. The lookup is a cookie / localStorage / memory read.
+     *
+     * An empty result is normal: the host creates the session lazily — on the
+     * first message sent (sendMessageToChatbot() → ensureSession()), or on
+     * widget open only when chat persistence is on (the launcher and pre-chat
+     * bubble handlers) — so an event can legitimately precede it.
      */
     function sessionIdToReport(botId) {
         if (!sendSessionId) {
             return '';
-        }
-        if (sessionCache[botId]) {
-            return sessionCache[botId];
         }
 
         var sid = '';
@@ -244,15 +260,6 @@
         }
         if (!sid) {
             sid = readStoredSession(botId);
-        }
-
-        // An empty result is never cached: the host creates the session lazily
-        // — on the first sent message, or on widget open only when chat
-        // persistence is on (mxchat-basic/js/chat-script.js:3505-3507) — so a
-        // click can legitimately precede it, and the next click may well find
-        // one.
-        if (sid) {
-            sessionCache[botId] = sid;
         }
         return sid;
     }
@@ -312,6 +319,42 @@
         log('GA4', eventName, payload);
     }
 
+    /**
+     * Run fn on a later task — setTimeout(fn, 0) — and NEVER on a microtask.
+     *
+     * Our listeners run in the capture phase, before the host's own handlers
+     * of the same dispatch, and some of those handlers are what create the
+     * session an event should carry. Browsers drain the microtask queue
+     * between the listener callbacks of a user-initiated dispatch, so a
+     * Promise.then() or queueMicrotask() would still run BEFORE the host's
+     * bubble-phase handler and find no session. Do not "optimise" this into a
+     * Promise.
+     *
+     * Only for events that never navigate (a suggestion is a <button>; an
+     * open is not a click at all). Link clicks are sent synchronously: the
+     * page may be unloading as soon as the dispatch ends.
+     */
+    function later(fn) {
+        window.setTimeout(function () {
+            try {
+                fn();
+            } catch (e) {
+                log('Deferred event failed', e);
+            }
+        }, 0);
+    }
+
+    /**
+     * A suggested question was clicked.
+     *
+     * Label, bot and dedup are resolved now, while the button is certainly
+     * where it was clicked; only the session lookup and the sends are
+     * deferred. The host's delegated suggestion handler runs after this
+     * capture listener and calls sendMessageToChatbot(), whose ensureSession()
+     * is what gives a visitor who has never chatted their session id
+     * (js/chat-script.js, MxChat 3.2.25). Read synchronously, the very click
+     * that starts a conversation could never be joined to it.
+     */
     function handleSuggestion(button) {
         var label = shortText(button);
         if (isDuplicate('suggestion|' + label)) {
@@ -320,21 +363,72 @@
         }
 
         var botId = botIdFor(button);
-        var sessionId = sessionIdToReport(botId);
 
-        sendMatomo(ACTION_SUGGESTION, label, '', sessionId);
+        later(function () {
+            var sessionId = sessionIdToReport(botId);
 
-        var payload = {
-            question_text: label,
-            mxchat_bot_id: botId
-        };
-        // Omitted rather than sent empty: in GA4 an empty string is a value,
-        // and it would show up in reports as a legitimate blank dimension
-        // member next to the real session ids.
-        if (sessionId) {
-            payload.mxchat_session_id = sessionId;
+            sendMatomo(ACTION_SUGGESTION, label, '', sessionId);
+
+            var payload = {
+                question_text: label,
+                mxchat_bot_id: botId
+            };
+            // Omitted rather than sent empty: in GA4 an empty string is a
+            // value, and it would show up in reports as a legitimate blank
+            // dimension member next to the real session ids.
+            if (sessionId) {
+                payload.mxchat_session_id = sessionId;
+            }
+            sendGa4('mxchat_suggestion_click', payload);
+        });
+    }
+
+    /**
+     * Does the host give this link target="_blank" at click time?
+     *
+     * Mirrors prepareTrackedLink() (js/chat-script.js, MxChat 3.2.25) — keep
+     * the two in step. With "Open links in new tab" on, the host retargets
+     * every absolute link it tracks. For links it formats or binds itself
+     * that happens before any click; for the ones only its delegated fallback
+     * handles (the intro message, replayed raw-HTML history, a click in the
+     * few hundred milliseconds before attachLinkTracking() binds) it happens
+     * in the bubble phase, after this capture listener has read the
+     * attribute.
+     *
+     * The host's own conditions, in its own terms:
+     *   - the RAW href starts with http:// or https://, case-sensitively.
+     *     Never test link.href, which the browser resolves to an absolute URL
+     *     for relative links too;
+     *   - the link sits inside .chat-box, the delegate's scope;
+     *   - the host has booted, i.e. the delegate is bound. window.getChatSession
+     *     is exported after it. window.mxchatChat alone proves nothing: under
+     *     the delay and on-interaction loading strategies it is printed inline
+     *     long before chat-script.js runs.
+     */
+    function hostOpensInNewTab(link, rawHref) {
+        var absolute = rawHref.slice(0, 7) === 'http://' || rawHref.slice(0, 8) === 'https://';
+        if (!absolute || typeof window.getChatSession !== 'function') {
+            return false;
         }
-        sendGa4('mxchat_suggestion_click', payload);
+        var hostCfg = window.mxchatChat;
+        if (!hostCfg || hostCfg.link_target_toggle !== 'on') {
+            return false;
+        }
+        return typeof link.closest === 'function' && !!link.closest('.chat-box');
+    }
+
+    /**
+     * The target the link actually opens in: an explicit _blank, the host's
+     * retargeting above, or else the attribute — `_self` when there is none.
+     * The host overrides any other attribute value when it retargets, so the
+     * order matters.
+     */
+    function effectiveTarget(link, rawHref) {
+        var attr = link.getAttribute('target') || '';
+        if (attr === '_blank' || hostOpensInNewTab(link, rawHref)) {
+            return '_blank';
+        }
+        return attr || '_self';
     }
 
     function handleLink(link) {
@@ -379,7 +473,7 @@
             link_url: url,
             link_text: label,
             link_scope: external ? 'external' : 'internal',
-            link_target: link.getAttribute('target') || '_self',
+            link_target: effectiveTarget(link, rawHref),
             mxchat_bot_id: botId
         };
         if (sessionId) {
@@ -402,7 +496,11 @@
         // the chat box, so testing them first avoids walking the DOM twice.
         var suggestion = target.closest(SUGGESTION_SELECTOR);
         if (suggestion) {
-            handleSuggestion(suggestion);
+            // The host sends the question on 'click' only: a middle- or
+            // right-click on a suggestion asks nothing, so it is not reported.
+            if (event.type === 'click') {
+                handleSuggestion(suggestion);
+            }
             return;
         }
 
@@ -413,29 +511,125 @@
         handleLink(link);
     }
 
+    // ─── Chat opened (opt-in) ────────────────────────────────────────────
+
+    // One event per bot per page load, whichever of the two routes below sees
+    // the open first. The host dedupes its own dispatch the same way.
+    var reportedOpens = {};
+
+    /** Mirrors the host's isEmbeddedBot(): no floating wrapper means embedded. */
+    function isEmbedded(botId) {
+        return !document.getElementById('floating-chatbot-' + botId);
+    }
+
+    /**
+     * The host dispatched mxchat:opened (MxChat 3.2.22+), or reported an
+     * earlier open through MxChatInstances.opened.
+     *
+     * Embedded chatbots are never reported. The host fires mxchat:opened for
+     * them at DOM-ready on every page view (an embedded widget "is on screen
+     * from the first paint"), so nobody opened anything — and since Matomo
+     * counts every event as an interaction, reporting it would turn every
+     * single-page visit to such a page into a non-bounce.
+     *
+     * A floating window counts however it was revealed: the launcher, the
+     * pre-chat bubble, or a script the host does not own (the Trigger add-on,
+     * a theme button, an auto-open), which the host catches with a
+     * MutationObserver. That is the host's definition of "opened" and the
+     * docs say so.
+     *
+     * Deferred like suggestions: the launcher dispatches the event before it
+     * calls ensureSession() (when chat persistence is on), in the same
+     * handler.
+     */
+    function handleOpen(botId, embedded) {
+        botId = botId ? String(botId) : 'default';
+        if (embedded) {
+            log('Embedded chatbot shown at load, not reported as an open', botId);
+            return;
+        }
+        if (reportedOpens[botId]) {
+            return;
+        }
+        reportedOpens[botId] = true;
+
+        later(function () {
+            var sessionId = sessionIdToReport(botId);
+
+            sendMatomo(ACTION_OPEN, botId, '', sessionId);
+
+            var payload = { mxchat_bot_id: botId };
+            if (sessionId) {
+                payload.mxchat_session_id = sessionId;
+            }
+            sendGa4('mxchat_chat_open', payload);
+        });
+    }
+
+    /**
+     * Opens that happened before this script ran — an optimiser that delays
+     * our file but not the host's. window.MxChatInstances is exported at the
+     * end of the host's ready handler; in the normal footer load it does not
+     * exist yet here, and the listener below catches the dispatch instead.
+     */
+    function reportEarlierOpens() {
+        var instances = window.MxChatInstances;
+        if (!instances || typeof instances.opened !== 'object' || !instances.opened) {
+            return;
+        }
+        for (var id in instances.opened) {
+            if (Object.prototype.hasOwnProperty.call(instances.opened, id) && instances.opened[id]) {
+                handleOpen(id, isEmbedded(id));
+            }
+        }
+    }
+
     /**
      * The capture phase is MANDATORY here. The host binds its own click handler
      * directly on each <a> inside a bubble and calls stopPropagation() on it
-     * (mxchat-basic/js/chat-script.js:2193-2195), so a bubble-phase listener on
-     * document never sees a link click at all. Capture runs on the way down,
-     * before the target's own handlers, and therefore always fires.
+     * (attachLinkTracking(), js/chat-script.js, MxChat 3.2.25), so a
+     * bubble-phase listener on document never sees those link clicks at all.
+     * Capture runs on the way down, before the target's own handlers, and
+     * therefore always fires.
      *
      * passive: true is both a performance hint and a promise we must keep: this
-     * handler must NEVER call preventDefault(). The host cancels the event
-     * itself and navigates programmatically from the completion callback of its
-     * own AJAX call (mxchat-basic/js/chat-script.js:2205-2219); cancelling the
-     * links it does not bind — every relative one — would leave the visitor on
-     * the page with nothing happening and no error anywhere.
+     * handler must NEVER call preventDefault(). Since MxChat 3.2.24 the host
+     * cancels no link click anywhere — neither in attachLinkTracking() nor in
+     * its delegated fallback — and lets the browser follow the anchor while it
+     * records the click with navigator.sendBeacon (trackLinkClick()). Nobody
+     * navigates programmatically any more, so a preventDefault() of ours would
+     * strand the visitor on EVERY link in an answer, absolute ones included,
+     * with no error anywhere. Nor may anything here hold a navigation back to
+     * resume it from a callback: a window.open() or location change made
+     * outside the visitor's tap is what Safari's pop-up blocker drops without
+     * a message — the very bug the host removed in 3.2.24.
+     *
+     * The price: a same-tab click unloads the page as soon as this dispatch
+     * ends, so its Matomo/GA4 hit survives only through the tracker's own
+     * unload-safe transport (sendBeacon; Matomo 4+ uses it by default). That
+     * was always true of relative links, and since 3.2.24 it is true of
+     * absolute ones too. It is the tracker's setting to make, never ours.
      */
     document.addEventListener('click', handleClick, { capture: true, passive: true });
 
     // Middle-click and open-in-new-tab never fire 'click'.
     document.addEventListener('auxclick', handleClick, { capture: true, passive: true });
 
+    if (trackChatOpen) {
+        // Feature-detected by the event itself: a host older than 3.2.22
+        // never dispatches it, and the listener simply stays idle.
+        document.addEventListener('mxchat:opened', function (event) {
+            var detail = (event && event.detail) || {};
+            handleOpen(detail.botId, detail.embedded === true);
+        });
+        reportEarlierOpens();
+    }
+
     log('Ready', {
         matomo: trackMatomo,
         ga4: trackGa4,
         sessionId: sendSessionId,
-        dimension: dimensionId
+        dimension: dimensionId,
+        chatOpen: trackChatOpen
     });
 })();

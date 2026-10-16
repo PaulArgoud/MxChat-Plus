@@ -9,8 +9,12 @@
  *   $proxy_token   (string)  Pinecone-proxy auth token (read-only)
  *   $proxy_host    (string)  Pinecone-proxy host fragment
  *   $detected_dim  (int)     detected embedding dimension from mxchat
- *   $active_embedding_model     (string) model mxchat is embedding with
- *   $embedding_model_is_custom  (bool)   true for a Custom/Azure provider
+ *   $active_embedding_model     (string) model of the vectors mxchat already stored (stamp)
+ *   $selected_embedding_model   (string) model mxchat's next embed will use
+ *   $selected_embedding_dim     (int)    its dimension, 0 when unknown
+ *   $embedding_model_is_custom  (bool)   true when the selection is a Custom/Azure provider
+ *   $bot_routing                (array)  Multi-Bot routing, see Options::bot_routing()
+ *   $multibot_active            (bool)   MxChat's Multi-Bot add-on is loaded
  *   $known_bots                 (string[]) bot ids for the per-bot overrides UI
  */
 

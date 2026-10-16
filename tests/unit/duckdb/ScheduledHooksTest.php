@@ -30,6 +30,7 @@ final class ScheduledHooksTest extends TestCase {
     private function expected(): array {
         return [
             MxChat_Plus_DuckDB_Sync::CRON_HOOK                 => '',
+            MxChat_Plus_DuckDB_Sync::RESYNC_HOOK               => '',
             MxChat_Plus_DuckDB_Compactor::CRON_HOOK            => '',
             MxChat_Plus_DuckDB_Async_Reprocess::ACTION_HOOK    => MxChat_Plus_DuckDB_Async_Reprocess::GROUP,
             MxChat_Plus_DuckDB_Mirror_Bootstrap::ACTION_HOOK   => MxChat_Plus_DuckDB_Mirror_Bootstrap::ACTION_GROUP,

@@ -3,7 +3,7 @@
  * Plugin Name: MxChat Plus
  * Plugin URI: https://github.com/PaulArgoud/mxchat-plus
  * Description: Extends MxChat with a DuckDB / MotherDuck vector store (an open-source, SQL-native alternative to Pinecone) and Anthropic prompt caching with cross-provider savings metrics. Companion plugin — it never modifies MxChat.
- * Version: 1.0.0
+ * Version: 1.1.0
  * Author: Paul Argoud
  * Author URI: https://github.com/PaulArgoud
  * License: GPLv2 or later
@@ -27,7 +27,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('MXCHAT_PLUS_VERSION', '1.0.0');
+define('MXCHAT_PLUS_VERSION', '1.1.0');
 define('MXCHAT_PLUS_FILE', __FILE__);
 define('MXCHAT_PLUS_DIR', plugin_dir_path(__FILE__));
 define('MXCHAT_PLUS_URL', plugin_dir_url(__FILE__));
@@ -57,6 +57,18 @@ add_action('init', ['MxChat_Plus_Plugin', 'load_textdomain']);
 // Priority 20: MxChat builds its globals on `plugins_loaded` at the default
 // priority, so the host gate below is only meaningful after it has run.
 add_action('plugins_loaded', ['MxChat_Plus_Plugin', 'boot'], 20);
+
+// At file scope, and deliberately NOT in boot(): MxChat applies the host
+// filter `mxchat_cache_purge_watched_options` exactly once, in the constructor
+// of MxChat_Cache_Purge, which mxchat_init() runs on plugins_loaded at
+// priority 10 (MxChat 3.2.25) — before boot() at 20. Registered any later, it
+// would never be read. It makes the host purge full-page caches when our
+// tracking settings or module switches are saved, since both are printed
+// into every public page; see add_host_cache_purge_watch(). Harmless when
+// MxChat is absent: nothing applies the filter. Moving it breaks no unit test
+// of the callback, so its placement is locked on its own, by
+// tests/unit/tracking/TrackingCachePurgeRegistrationTest.php.
+add_filter('mxchat_cache_purge_watched_options', ['MxChat_Plus_Tracking_Options', 'add_host_cache_purge_watch']);
 
 class MxChat_Plus_Plugin {
 
@@ -106,8 +118,8 @@ class MxChat_Plus_Plugin {
 
     private static function boot_duckdb(): void {
         // Search adapter: the Option A filter (`mxchat_pre_vector_query`, which
-        // mxchat-basic does not ship as of 3.2.21 — inert unless the host is
-        // patched) plus the Pinecone config filter used by Option B.
+        // mxchat-basic does not ship as of 3.2.25 — inert unless the host is
+        // patched) plus the Pinecone config seams used by Option B.
         MxChat_Plus_DuckDB_Search_Adapter::instance()->register_hooks();
 
         // Option B, the nominal path: a REST endpoint emulating the Pinecone

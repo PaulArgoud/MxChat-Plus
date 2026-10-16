@@ -10,7 +10,11 @@ use PHPUnit\Framework\TestCase;
  *   - start() flips status to 'bootstrapping' and enqueues a tick
  *   - first tick probes target_count + ensures local schema + runs
  *     first batch
- *   - subsequent tick uses the persisted cursor (last_vector_id)
+ *   - subsequent tick uses the persisted (last_vector_id, last_bot_id)
+ *     cursor — schema v4 keys rows on (bot_id, vector_id), so one id can
+ *     exist once per bot
+ *   - the copy names its columns (no positional SELECT *), so a primary
+ *     still on the pre-v4 layout copies into a v4 local table
  *   - completion flips status to 'active' and stops enqueueing
  *   - target_count = 0 short-circuits to 'active' on the first tick
  *   - exceptions flip status to 'error', persist last_error, and
@@ -46,7 +50,11 @@ final class MirrorBootstrapTest extends TestCase {
                 $this->log[] = $sql;
                 $this->params_log[] = $params;
                 if ($this->throw_on !== null && stripos($sql, $this->throw_on) !== false) {
-                    throw new RuntimeException("mock throw on '{$this->throw_on}'");
+                    // An introspection of a missing table fails the way DuckDB
+                    // does; table_columns() only reads that error as "absent".
+                    $missing = stripos($this->throw_on, 'pragma_table_info') !== false
+                        ? ' — Catalog Error: Table with name x does not exist!' : '';
+                    throw new RuntimeException("mock throw on '{$this->throw_on}'{$missing}");
                 }
                 foreach ($this->responses as $needle => $rows) {
                     if (stripos($sql, (string) $needle) !== false) return $rows;
@@ -123,8 +131,8 @@ final class MirrorBootstrapTest extends TestCase {
         $conn = $this->makeConn([
             'SELECT COUNT(*) AS c FROM md_remote' => [['c' => 2500]],
             'SELECT COUNT(*) AS c FROM "mxchat_vectors"' => [['c' => 50]],
-            'SELECT vector_id FROM md_remote' => array_map(
-                fn($i) => ['vector_id' => sprintf('v%04d', $i)],
+            'SELECT vector_id, ' => array_map(
+                fn($i) => ['vector_id' => sprintf('v%04d', $i), 'bot_id' => 'default'],
                 range(1, 50)
             ),
         ]);
@@ -141,14 +149,18 @@ final class MirrorBootstrapTest extends TestCase {
             'first tick must run the first batch INSERT');
         $this->assertStringContainsString('FROM md_remote."mxchat_vectors"', $log,
             'INSERT must SELECT from the md_remote-attached table');
-        $this->assertStringContainsString('WHERE vector_id > ?', $log,
-            'cursor must be a bound parameter, not inlined');
+        $this->assertStringContainsString('WHERE vector_id > ? OR (vector_id = ? AND', $log,
+            'cursor must be a bound (vector_id, bot_id) tuple, not inlined');
+        $this->assertStringNotContainsString('SELECT * FROM md_remote', $log,
+            'the copy must name its columns — the two sides may have different layouts');
 
         $state = MxChat_Plus_DuckDB_Mirror_Bootstrap::get_state();
         $this->assertSame(2500, $state['target_count'],
             'target_count populated from the COUNT probe');
         $this->assertSame('v0050', $state['last_vector_id'],
             'cursor advanced to the last vector_id of this batch');
+        $this->assertSame('default', $state['last_bot_id'],
+            'and to its bot_id');
 
         $this->assertFalse($result['done'], 'not done — local count below target');
         $this->assertSame(MxChat_Plus_DuckDB_Mirror_Bootstrap::STATUS_BOOTSTRAPPING, $result['status']);
@@ -174,8 +186,8 @@ final class MirrorBootstrapTest extends TestCase {
 
         $conn = $this->makeConn([
             'SELECT COUNT(*) AS c FROM "mxchat_vectors"' => [['c' => 2000]],
-            'SELECT vector_id FROM md_remote' => array_map(
-                fn($i) => ['vector_id' => sprintf('v%04d', $i)],
+            'SELECT vector_id, ' => array_map(
+                fn($i) => ['vector_id' => sprintf('v%04d', $i), 'bot_id' => 'default'],
                 range(1001, 2000)
             ),
         ]);
@@ -192,8 +204,8 @@ final class MirrorBootstrapTest extends TestCase {
             }
         }
         $this->assertNotNull($insert_idx, 'INSERT must have been emitted');
-        $this->assertSame(['v1000'], $conn->params_log[$insert_idx],
-            'cursor v1000 must be bound on the INSERT');
+        $this->assertSame(['v1000', 'v1000', ''], $conn->params_log[$insert_idx],
+            'cursor (v1000, "") must be bound on the INSERT — a state saved before last_bot_id existed resumes after every bot of v1000');
 
         $state = MxChat_Plus_DuckDB_Mirror_Bootstrap::get_state();
         $this->assertSame('v2000', $state['last_vector_id'],
@@ -245,7 +257,7 @@ final class MirrorBootstrapTest extends TestCase {
         // After this tick's INSERT, local has 100 rows = target.
         $conn = $this->makeConn([
             'SELECT COUNT(*) AS c FROM "mxchat_vectors"' => [['c' => 100]],
-            'SELECT vector_id FROM md_remote' => [['vector_id' => 'v0100']],
+            'SELECT vector_id, ' => [['vector_id' => 'v0100', 'bot_id' => 'default']],
         ]);
         $bootstrap = new MxChat_Plus_DuckDB_Mirror_Bootstrap($conn);
 
@@ -327,6 +339,102 @@ final class MirrorBootstrapTest extends TestCase {
             'must NOT re-enqueue when the mirror has been disabled');
     }
 
+    // ─── composite key (schema v4) ───────────────────────────────────────
+
+    public function test_cursor_carries_the_bot_so_a_shared_id_is_not_skipped(): void {
+        // md5(/pricing) exists for 'default' AND 'sales'. A batch boundary
+        // that falls between the two copies must resume at ('id', 'default')
+        // and still pick up ('id', 'sales') — a cursor on vector_id alone
+        // (WHERE vector_id > 'id') skipped it.
+        $this->setMotherDuckMode();
+        update_option(MxChat_Plus_DuckDB_Mirror_Bootstrap::STATE_OPTION, [
+            'started_at'      => time() - 60,
+            'target_count'    => 10,
+            'processed_count' => 1,
+            'last_vector_id'  => 'shared',
+            'last_bot_id'     => 'default',
+            'last_error'      => '',
+            'completed_at'    => null,
+        ]);
+        $conn = $this->makeConn([
+            'SELECT COUNT(*) AS c FROM "mxchat_vectors"' => [['c' => 2]],
+            'SELECT vector_id, ' => [['vector_id' => 'shared', 'bot_id' => 'sales']],
+        ]);
+        (new MxChat_Plus_DuckDB_Mirror_Bootstrap($conn))->tick();
+
+        $insert_idx = null;
+        foreach ($conn->log as $i => $sql) {
+            if (stripos($sql, 'INSERT OR REPLACE INTO "mxchat_vectors"') !== false) { $insert_idx = $i; break; }
+        }
+        $this->assertNotNull($insert_idx);
+        $this->assertSame(['shared', 'shared', 'default'], $conn->params_log[$insert_idx]);
+        $this->assertStringContainsString('ORDER BY vector_id, ', $conn->log[$insert_idx]);
+
+        $state = MxChat_Plus_DuckDB_Mirror_Bootstrap::get_state();
+        $this->assertSame('shared', $state['last_vector_id']);
+        $this->assertSame('sales', $state['last_bot_id']);
+    }
+
+    public function test_pre_v4_primary_is_copied_by_name_into_the_v4_table(): void {
+        // The primary reports the pre-v4 columns (no title, no row_key, no
+        // updated_at). The INSERT must list the v4 columns, fill the missing
+        // ones with defaults and recompute row_key from the normalised bot.
+        $this->setMotherDuckMode();
+        update_option(MxChat_Plus_DuckDB_Mirror_Bootstrap::STATE_OPTION, [
+            'started_at' => time(), 'target_count' => 5, 'processed_count' => 0,
+            'last_vector_id' => '', 'last_bot_id' => '', 'last_error' => '', 'completed_at' => null,
+        ]);
+        $legacy_cols = array_map(fn($n) => ['name' => $n, 'pk' => $n === 'vector_id', 'type' => 'VARCHAR'],
+            ['vector_id', 'bot_id', 'embedding', 'content', 'source_url', 'role_restriction',
+             'content_type', 'chunk_index', 'total_chunks', 'is_chunked', 'created_at']);
+        $conn = $this->makeConn([
+            "pragma_table_info('md_remote.mxchat_vectors')" => $legacy_cols,
+            'SELECT COUNT(*) AS c FROM "mxchat_vectors"' => [['c' => 1]],
+        ]);
+        (new MxChat_Plus_DuckDB_Mirror_Bootstrap($conn))->tick();
+
+        $insert = '';
+        foreach ($conn->log as $sql) {
+            if (stripos($sql, 'INSERT OR REPLACE INTO "mxchat_vectors"') !== false) { $insert = $sql; break; }
+        }
+        $this->assertStringContainsString('INSERT OR REPLACE INTO "mxchat_vectors" (' . implode(', ', MxChat_Plus_DuckDB_Vector_Store_Schema::COLUMNS) . ')', $insert);
+        $this->assertStringContainsString("COALESCE(NULLIF(bot_id, ''), 'default')", $insert,
+            'a NULL/empty bot_id on the primary lands under default');
+        $this->assertStringContainsString('chr(31)', $insert, 'row_key is recomputed');
+        $this->assertStringContainsString('FROM md_remote."mxchat_vectors" WHERE', $insert);
+    }
+
+    public function test_missing_primary_table_is_an_error_not_an_empty_copy(): void {
+        $this->setMotherDuckMode();
+        update_option(MxChat_Plus_DuckDB_Mirror_Bootstrap::STATE_OPTION, [
+            'started_at' => time(), 'target_count' => 5, 'processed_count' => 0,
+            'last_vector_id' => '', 'last_bot_id' => '', 'last_error' => '', 'completed_at' => null,
+        ]);
+        $conn = $this->makeConn([], "pragma_table_info('md_remote.");
+        $result = (new MxChat_Plus_DuckDB_Mirror_Bootstrap($conn))->tick();
+        $this->assertSame(MxChat_Plus_DuckDB_Mirror_Bootstrap::STATUS_ERROR, $result['status']);
+        $this->assertStringContainsString('does not exist', $result['last_error'] ?? '');
+    }
+
+    public function test_an_exhausted_cursor_completes_even_below_the_target(): void {
+        // The primary shrank after the first tick (the host deleted entries
+        // meanwhile): the cursor is past the last row, the local count will
+        // never reach the stale target, and the run must not tick forever.
+        $this->setMotherDuckMode();
+        update_option(MxChat_Plus_DuckDB_Mirror_Bootstrap::STATE_OPTION, [
+            'started_at' => time() - 60, 'target_count' => 100, 'processed_count' => 90,
+            'last_vector_id' => 'v0090', 'last_bot_id' => 'default', 'last_error' => '', 'completed_at' => null,
+        ]);
+        $GLOBALS['__test_as_queue'] = [];
+        $conn = $this->makeConn(['SELECT COUNT(*) AS c FROM "mxchat_vectors"' => [['c' => 90]]]);
+
+        $result = (new MxChat_Plus_DuckDB_Mirror_Bootstrap($conn))->tick();
+
+        $this->assertTrue($result['done']);
+        $this->assertSame(MxChat_Plus_DuckDB_Mirror_Bootstrap::STATUS_ACTIVE, $result['status']);
+        $this->assertEmpty($GLOBALS['__test_as_queue'], 'no further tick');
+    }
+
     // ─── state helpers ────────────────────────────────────────────────────
 
     public function test_get_state_returns_defaults_when_unset(): void {
@@ -334,6 +442,7 @@ final class MirrorBootstrapTest extends TestCase {
         $this->assertSame(0, $state['started_at']);
         $this->assertNull($state['target_count']);
         $this->assertSame('', $state['last_vector_id']);
+        $this->assertSame('', $state['last_bot_id']);
     }
 
     public function test_get_status_defaults_to_disabled(): void {

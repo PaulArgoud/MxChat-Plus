@@ -2,22 +2,30 @@
 /**
  * Prompt Cache module — cœur : injection Anthropic + mesure multi-provider.
  *
- * Deux greffons sur la pile HTTP de WordPress, aucun fichier du plugin hôte
- * (mxchat-basic) n'est modifié :
+ * Trois greffons, aucun fichier du plugin hôte (mxchat-basic) n'est modifié :
  *
  *   1. `http_request_args`  → INJECTION. Uniquement api.anthropic.com/v1/messages.
  *      Pose jusqu'à MXCHAT_PLUS_PC_MAX_BREAKPOINTS marqueurs cache_control
- *      (tools → system → avant-dernier user → dernier user) et ajoute le header
- *      beta requis par la TTL 1 h.
+ *      (tools → system → historique, selon la forme du payload de MxChat :
+ *      cf. MxChat_Plus_PromptCache_Models::history_breakpoint_plan()) et
+ *      ajoute, par compatibilité, l'ancien header beta de la TTL 1 h — que
+ *      l'API n'exige plus.
  *   2. `http_response`      → MESURE. Tous les providers reconnus (Anthropic,
- *      OpenAI/OpenRouter/xAI/DeepSeek, Gemini), dont le cache est automatique :
- *      on ne modifie rien, on lit juste les tokens cachés pour le tableau de bord.
+ *      OpenAI Chat Completions et Responses, OpenRouter/xAI/DeepSeek, Gemini
+ *      natif ou OpenAI-compatible, fournisseur personnalisé de MxChat), dont le
+ *      cache est automatique : on ne modifie rien, on lit juste les tokens
+ *      cachés pour le tableau de bord.
+ *   3. `mxchat_system_instructions` (filtre de l'HÔTE, en observation pure :
+ *      la valeur est rendue inchangée) → repère la valeur que MxChat substitue
+ *      à `{current_datetime}`, pour traiter ce system comme volatile.
  *
  * Filtres exposés aux intégrateurs :
- *   mxchat_plus_promptcache_should_inject      (bool,  $payload, $args, $url)
- *   mxchat_plus_promptcache_min_chars          (int,   $model, $payload)
- *   mxchat_plus_promptcache_min_messages       (int,   $payload)
- *   mxchat_plus_promptcache_ephemeral_control  (array) — cf. Models::ephemeral_control()
+ *   mxchat_plus_promptcache_should_inject             (bool,  $payload, $args, $url)
+ *   mxchat_plus_promptcache_min_chars                 (int,   $model, $payload)
+ *   mxchat_plus_promptcache_min_messages              (int,   $payload)
+ *   mxchat_plus_promptcache_volatile_system           (bool,  $payload)
+ *   mxchat_plus_promptcache_send_extended_ttl_header  (bool,  $args)
+ *   mxchat_plus_promptcache_ephemeral_control         (array) — cf. Models::ephemeral_control()
  */
 
 if (!defined('ABSPATH')) {
@@ -26,10 +34,22 @@ if (!defined('ABSPATH')) {
 
 class MxChat_Plus_PromptCache {
 
-    /** Accroche les deux greffons HTTP. Idempotent côté WordPress. */
+    /**
+     * Valeurs `{current_datetime}` vues dans le system de MxChat pendant cette
+     * requête PHP (cf. observe_system_instructions()).
+     *
+     * @var list<string>
+     */
+    private static array $observed_datetimes = [];
+
+    /** Accroche les greffons. Idempotent côté WordPress. */
     public static function register_hooks(): void {
         add_filter('http_request_args', [self::class, 'inject_cache_control'], 10, 2);
         add_filter('http_response', [self::class, 'record_metrics'], 10, 3);
+        // Nom de filtre de l'HÔTE (MxChat_Integrator::get_system_instructions(),
+        // 3.2.21+) : ne pas le préfixer. Priorité maximale pour voir la valeur
+        // finale ; on observe sans jamais modifier.
+        add_filter('mxchat_system_instructions', [self::class, 'observe_system_instructions'], PHP_INT_MAX, 1);
     }
 
     /** Strict host+path match : gate de l'INJECTION (Anthropic uniquement). */
@@ -44,6 +64,74 @@ class MxChat_Plus_PromptCache {
         $host = $parsed['host'] ?? '';
         $path = $parsed['path'] ?? '';
         return $host === 'api.anthropic.com' && $path === '/v1/messages';
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    //  0) Observation du system de l'hôte ({current_datetime})
+    // ──────────────────────────────────────────────────────────────────
+
+    /**
+     * Repère, dans les instructions que MxChat vient d'assembler, la valeur
+     * qu'il a substituée à `{current_datetime}` (3.2.22+, MxChat_Integrator::
+     * get_system_instructions() appelle ce filtre juste après la substitution).
+     *
+     * Pourquoi observer plutôt que relire le prompt du propriétaire : le bot
+     * (Multi-Bot) n'est connu ni de l'URL ni du payload qu'intercepte
+     * http_request_args, et un prompt global testé à tort marquerait volatile
+     * un bot qui n'a pas le placeholder. Ici on voit la chaîne réellement
+     * envoyée ; inject_cache_control() la cherchera dans le system sortant.
+     * La boucle AI Tools calcule son system une seule fois, puis exécute des
+     * outils avant les sauts suivants : retenir la valeur vue vaut mieux que
+     * recalculer « maintenant » au moment de l'envoi.
+     *
+     * Pass-through strict : la valeur est toujours rendue telle quelle.
+     */
+    public static function observe_system_instructions(mixed $instructions): mixed {
+        if (!is_string($instructions) || $instructions === '') {
+            return $instructions;
+        }
+        $now = time();
+        // Minute courante et précédente : la substitution a pu se faire juste
+        // avant un changement de minute.
+        foreach ([$now, $now - 60] as $timestamp) {
+            $value = MxChat_Plus_PromptCache_Models::host_datetime_placeholder($timestamp);
+            if ($value !== '' && str_contains($instructions, $value)) {
+                if (!in_array($value, self::$observed_datetimes, true)) {
+                    self::$observed_datetimes[] = $value;
+                    if (count(self::$observed_datetimes) > MXCHAT_PLUS_PC_OBSERVED_DATETIMES_MAX) {
+                        array_shift(self::$observed_datetimes);
+                    }
+                }
+                break;
+            }
+        }
+        return $instructions;
+    }
+
+    /**
+     * Valeurs `{current_datetime}` à chercher dans un system sortant : celles
+     * observées pendant la requête, plus celles de maintenant, −60 s et −120 s
+     * quand l'observation n'a pas eu lieu (autre chemin d'appel, filtre retiré).
+     * −120 s couvre la boucle AI Tools, dont les sauts suivent l'exécution des
+     * outils et les retries de l'hôte.
+     *
+     * @return list<string>
+     */
+    public static function current_datetime_candidates(): array {
+        $values = self::$observed_datetimes;
+        $now    = time();
+        foreach ([$now, $now - 60, $now - 120] as $timestamp) {
+            $value = MxChat_Plus_PromptCache_Models::host_datetime_placeholder($timestamp);
+            if ($value !== '') {
+                $values[] = $value;
+            }
+        }
+        return array_values(array_unique($values));
+    }
+
+    /** Oublie les valeurs observées (processus longs, tests). */
+    public static function forget_observed_datetimes(): void {
+        self::$observed_datetimes = [];
     }
 
     // ──────────────────────────────────────────────────────────────────
@@ -99,35 +187,88 @@ class MxChat_Plus_PromptCache {
          */
         $min_chars = (int) apply_filters('mxchat_plus_promptcache_min_chars', $min_chars, $model, $payload);
 
+        // Pourquoi le system changerait-il à chaque requête ? Bloc base de
+        // connaissances (jeton `{context}`) ou valeur `{current_datetime}`
+        // (change chaque minute). `{current_date}` reste cachable.
+        $volatile_reason = MxChat_Plus_PromptCache_Models::system_volatility_reason(
+            $payload['system'] ?? null,
+            self::current_datetime_candidates()
+        );
+        $detected = $volatile_reason !== '';
+
+        /**
+         * Le system porte-t-il du contenu recalculé à chaque requête ?
+         *
+         * Vrai par défaut quand MxChat y a injecté le bloc base de connaissances
+         * (jeton `{context}`) ou la valeur de `{current_datetime}`. Le module ne
+         * marque alors ni le system ni l'historique d'un tour à l'autre (u_N /
+         * u_{N-1}), et n'allonge pas le marqueur 5 min que l'hôte a pu poser :
+         * ce préfixe change d'un tour à l'autre, chaque écriture serait perdue.
+         * Les tools, rendus AVANT le system, restent cachables, et les
+         * breakpoints 5 min de la boucle AI Tools restent posés : MxChat calcule
+         * le system une fois par tour et renvoie la même chaîne à chaque saut.
+         * Seul moyen de couvrir une donnée volatile injectée par un shortcode ou
+         * un filtre tiers.
+         *
+         * @param bool  $volatile Détection par défaut.
+         * @param array $payload  Payload décodé.
+         */
+        $volatile_system = (bool) apply_filters('mxchat_plus_promptcache_volatile_system', $detected, $payload);
+        if ($volatile_system !== $detected) {
+            $volatile_reason = MxChat_Plus_PromptCache_Models::VOLATILE_FILTER;
+        }
+
+        $has_tools = !empty($payload['tools']) && is_array($payload['tools']);
+        $layout    = MxChat_Plus_PromptCache_Models::analyze_host_messages($payload['messages'] ?? null, $has_tools);
+        $control   = MxChat_Plus_PromptCache_Models::ephemeral_control();
+
         $mutated = false;
         // Compte les breakpoints déjà posés par l'hôte (MxChat 3.2.21+ marque
         // son bloc system) : le plafond de 4 d'Anthropic est global à la
         // requête, pas propre à ce plugin.
         $used    = MxChat_Plus_PromptCache_Models::count_existing_breakpoints($payload);
         $debug   = [
-            'time'        => time(),
-            'model'       => $model,
-            'min_chars'   => $min_chars,
-            'breakpoints' => [
-                'tools'     => false,
-                'system'    => false,
-                'prev_user' => false,
-                'last_user' => false,
+            'time'                  => time(),
+            'model'                 => $model,
+            'min_chars'             => $min_chars,
+            'shape'                 => $layout['shape'],
+            'volatile_system'       => $volatile_system,
+            'volatile_reason'       => $volatile_reason,
+            'ttl_upgraded'          => 0,
+            'tool_inputs_repaired'  => 0,
+            'json_objects_restored' => 0,
+            // État du saut de la boucle AI Tools de MxChat (step, calls_made,
+            // remaining, write, read), cf. Models::loop_hop_cacheability() ;
+            // null hors de cette boucle.
+            'loop'                  => null,
+            // prev_user / last_user : paire glissante (lecture / écriture). Sur
+            // le chemin MxChat, ce sont les messages bruts du visiteur u_{N-1} /
+            // u_N, jamais le bloc de contexte ; dans la boucle AI Tools, le
+            // contexte ou tool_result précédent / le dernier tool_result.
+            // context_block : bloc de contexte du premier saut AI Tools (5 min).
+            'breakpoints'           => [
+                'tools'         => false,
+                'system'        => false,
+                'prev_user'     => false,
+                'last_user'     => false,
+                'context_block' => false,
             ],
         ];
 
         // --- 1) Tools : breakpoint sur le dernier outil si volumineux et non déjà caché.
-        // Les tools sont rendus AVANT system dans le préfixe : c'est le bloc le plus stable.
+        // Les tools sont rendus AVANT system dans le préfixe : c'est le bloc le plus
+        // stable. Le marqueur system de l'hôte couvre déjà tools + system ; celui-ci
+        // garde les tools en cache quand le system varie ({context}, {visitor_name},
+        // {current_date}, {current_datetime}).
         if (
             $used < MXCHAT_PLUS_PC_MAX_BREAKPOINTS
-            && !empty($payload['tools'])
-            && is_array($payload['tools'])
+            && $has_tools
             && !MxChat_Plus_PromptCache_Models::blocks_have_cache_control($payload['tools'])
             && MxChat_Plus_PromptCache_Models::tools_size($payload['tools'], $min_chars) >= $min_chars
         ) {
             $last = count($payload['tools']) - 1;
-            if (is_array($payload['tools'][$last])) {
-                $payload['tools'][$last]['cache_control'] = MxChat_Plus_PromptCache_Models::ephemeral_control();
+            if (isset($payload['tools'][$last]) && is_array($payload['tools'][$last])) {
+                $payload['tools'][$last]['cache_control'] = $control;
                 $mutated = true;
                 $used++;
                 $debug['breakpoints']['tools'] = true;
@@ -136,14 +277,17 @@ class MxChat_Plus_PromptCache {
 
         // --- 2) System : indépendant de l'historique (un breakpoint déjà présent
         //                 sur les messages ne doit PAS bloquer la mise en cache du system).
-        if ($used < MXCHAT_PLUS_PC_MAX_BREAKPOINTS && !empty($payload['system'])) {
+        //                 Jamais sur un system volatile : MxChat s'en abstient
+        //                 exprès pour `{context}`, et un system `{current_datetime}`
+        //                 ne vit qu'une minute.
+        if ($used < MXCHAT_PLUS_PC_MAX_BREAKPOINTS && !$volatile_system && !empty($payload['system'])) {
             $system_size = MxChat_Plus_PromptCache_Models::system_size($payload['system']);
             if ($system_size >= $min_chars) {
                 if (is_string($payload['system'])) {
                     $payload['system'] = [[
                         'type'          => 'text',
                         'text'          => $payload['system'],
-                        'cache_control' => MxChat_Plus_PromptCache_Models::ephemeral_control(),
+                        'cache_control' => $control,
                     ]];
                     $mutated = true;
                     $used++;
@@ -152,8 +296,8 @@ class MxChat_Plus_PromptCache {
                     && !MxChat_Plus_PromptCache_Models::blocks_have_cache_control($payload['system'])
                 ) {
                     $last = count($payload['system']) - 1;
-                    if (is_array($payload['system'][$last])) {
-                        $payload['system'][$last]['cache_control'] = MxChat_Plus_PromptCache_Models::ephemeral_control();
+                    if (isset($payload['system'][$last]) && is_array($payload['system'][$last])) {
+                        $payload['system'][$last]['cache_control'] = $control;
                         $mutated = true;
                         $used++;
                         $debug['breakpoints']['system'] = true;
@@ -162,30 +306,42 @@ class MxChat_Plus_PromptCache {
             }
         }
 
-        // --- 3) Historique : 2 breakpoints "rolling" sur les derniers messages user.
-        // Le dernier user = écriture du cache. L'avant-dernier user = lecture au prochain tour
-        // (il était le "dernier" lors de la requête précédente). Cette stratégie maintient
-        // un hit rate stable même quand la conversation s'allonge.
+        // --- 3) Historique, selon la forme du payload (cf. Models::analyze_host_messages()
+        // et Models::history_breakpoint_plan()).
         //
-        // Seuil minimum de MXCHAT_PLUS_PC_MIN_MESSAGES messages : il faut au moins
-        // (user, assistant, user) pour avoir un préfixe stable cachable + un point de lecture
-        // potentiel au tour suivant.
+        // MxChat termine chaque requête de chat par un bloc de contexte (ligne de
+        // date, "User asked: '…'", base de connaissances) qu'il ne renvoie JAMAIS
+        // au tour suivant : il n'est pas enregistré dans la transcription
+        // (MxChat_Integrator::mxchat_handle_chat_request(), MxChat 3.2.21 → 3.2.25).
+        // Le marquer, comme le faisait la paire « deux derniers user », payait la
+        // prime d'écriture 1 h sur des milliers de tokens à chaque tour, pour une
+        // entrée jamais relue. La paire glissante va donc sur les messages bruts
+        // du visiteur qui le précèdent : l'écriture d'un tour (u_N) est la lecture
+        // du suivant.
         /**
          * Filtre le nombre minimum de messages avant d'activer le cache historique.
-         * Défaut 3 (user, assistant, user) : évite la prime d'écriture sur les chats
+         * Défaut 3 (user, assistant, user), compté sans la note d'en-tête ni le
+         * bloc de contexte de MxChat : évite la prime d'écriture sur les chats
          * one-shot jamais relus. Baisser à 1 pour cacher dès le 1er tour (sessions
-         * longues), au prix d'écritures parfois inutiles.
+         * longues), au prix d'écritures parfois inutiles. Ne concerne pas les
+         * breakpoints posés dans la boucle AI Tools, qui servent le tour en cours.
          *
          * @param int   $min     Défaut MXCHAT_PLUS_PC_MIN_MESSAGES.
          * @param array $payload Payload décodé.
          */
         $min_messages = (int) apply_filters('mxchat_plus_promptcache_min_messages', MXCHAT_PLUS_PC_MIN_MESSAGES, $payload);
 
+        // Un system volatile précède l'historique dans le préfixe : d'un tour à
+        // l'autre, l'historique change donc lui aussi, et les breakpoints
+        // inter-tours (u_N / u_{N-1}, TTL du module) sont retirés. Pas ceux de
+        // la boucle AI Tools (5 min) : MxChat_Integrator::mxchat_fc_attempt()
+        // (MxChat 3.2.25) calcule le system UNE fois par tour, et
+        // mxchat_fc_loop_anthropic() renvoie la même chaîne à chaque saut, si
+        // bien que le saut suivant relit ce que celui-ci écrit.
         if (
             $used < MXCHAT_PLUS_PC_MAX_BREAKPOINTS
             && !empty($payload['messages'])
             && is_array($payload['messages'])
-            && count($payload['messages']) >= $min_messages
         ) {
             $already_cached = false;
             foreach ($payload['messages'] as $msg) {
@@ -198,32 +354,79 @@ class MxChat_Plus_PromptCache {
             }
 
             if (!$already_cached) {
-                $user_idx        = MxChat_Plus_PromptCache_Models::last_user_indexes($payload['messages'], 2);
-                $slots_remaining = MXCHAT_PLUS_PC_MAX_BREAKPOINTS - $used;
-
-                // Avant-dernier user d'abord (ordre logique du préfixe).
-                if ($slots_remaining >= 2 && isset($user_idx[1])) {
-                    $idx = $user_idx[1];
-                    if (isset($payload['messages'][$idx]['content'])
-                        && MxChat_Plus_PromptCache_Models::add_cache_control_to_content($payload['messages'][$idx]['content'])
-                    ) {
-                        $mutated = true;
-                        $used++;
-                        $debug['breakpoints']['prev_user'] = true;
-                    }
+                // Boucle AI Tools de MxChat (bloc de contexte reconnu) : une
+                // écriture n'est relue que si le saut suivant offre encore
+                // `tools` avec le même `tool_choice`. Une boucle d'un autre
+                // plugin garde la paire complète.
+                $loop = null;
+                if (($layout['shape'] === MxChat_Plus_PromptCache_Models::SHAPE_FC_FIRST_HOP
+                        || $layout['shape'] === MxChat_Plus_PromptCache_Models::SHAPE_FC_LOOP)
+                    && $layout['context'] !== null
+                ) {
+                    $loop = MxChat_Plus_PromptCache_Models::loop_hop_cacheability(
+                        $payload['messages'],
+                        $payload['tool_choice'] ?? null,
+                        MxChat_Plus_Host::tool_loop_profile()
+                    );
+                    $debug['loop'] = $loop;
                 }
-                // Dernier user (write breakpoint).
-                if ($used < MXCHAT_PLUS_PC_MAX_BREAKPOINTS && isset($user_idx[0])) {
-                    $idx = $user_idx[0];
+                $loop_control = MxChat_Plus_PromptCache_Models::loop_control($control);
+                $plan         = MxChat_Plus_PromptCache_Models::history_breakpoint_plan($payload['messages'], $layout, $min_messages, $loop);
+                if ($volatile_system) {
+                    $plan = array_values(array_filter($plan, static fn(array $mark): bool => $mark['loop']));
+                }
+                foreach ($plan as $mark) {
+                    if ($used >= MXCHAT_PLUS_PC_MAX_BREAKPOINTS) {
+                        break;
+                    }
+                    $idx = $mark['index'];
                     if (isset($payload['messages'][$idx]['content'])
-                        && MxChat_Plus_PromptCache_Models::add_cache_control_to_content($payload['messages'][$idx]['content'])
+                        && MxChat_Plus_PromptCache_Models::add_cache_control_to_content(
+                            $payload['messages'][$idx]['content'],
+                            $mark['loop'] ? $loop_control : $control
+                        )
                     ) {
                         $mutated = true;
                         $used++;
-                        $debug['breakpoints']['last_user'] = true;
+                        $debug['breakpoints'][$mark['slot']] = true;
                     }
                 }
             }
+        }
+
+        // --- 4) TTL. MxChat 3.2.21+ marque son system en 5 min ; nos breakpoints
+        // inter-tours sont en 1 h par défaut. Anthropic exige qu'un breakpoint 1 h
+        // ne suive jamais un breakpoint 5 min. On aligne d'abord les marqueurs de
+        // l'hôte sur tools/system à la TTL du module (le prompt système, commun à
+        // tous les visiteurs, est le préfixe qui gagne le plus à durer) — sauf sur
+        // un system volatile, dont le marqueur 5 min couvre déjà toute la vie
+        // utile —, puis on vérifie l'ordre sur toute la requête, marqueurs tiers
+        // compris. Les breakpoints de boucle (5 min) viennent après les 1 h :
+        // ordre valide, enforce_ttl_order() les laisse tels quels.
+        $ttl_upgraded = MxChat_Plus_PromptCache_Models::align_prefix_ttl($payload, $control, !$volatile_system);
+        $ttl_upgraded += MxChat_Plus_PromptCache_Models::enforce_ttl_order($payload);
+        if ($ttl_upgraded > 0) {
+            $mutated = true;
+        }
+        $debug['ttl_upgraded'] = $ttl_upgraded;
+
+        // --- 5) tool_use.input arrivé en [] (décodage de l'hôte) → {}.
+        $repaired = MxChat_Plus_PromptCache_Models::repair_tool_use_inputs($payload);
+        if ($repaired > 0) {
+            $mutated = true;
+        }
+        $debug['tool_inputs_repaired'] = $repaired;
+
+        $extended = MxChat_Plus_PromptCache_Models::payload_uses_extended_ttl($payload);
+
+        if ($mutated) {
+            // Le décodage en tableaux a transformé les objets vides `{}` du body
+            // en `[]` : on les remet en objets avant de ré-encoder, sans quoi un
+            // outil AI Tools sans argument serait rejeté par Anthropic.
+            $debug['json_objects_restored'] = MxChat_Plus_PromptCache_Models::restore_json_objects(
+                $payload,
+                MxChat_Plus_PromptCache_Models::json_object_paths(json_decode($args['body'], false))
+            );
         }
 
         MxChat_Plus_PromptCache_Stats::set_debug($debug);
@@ -235,21 +438,30 @@ class MxChat_Plus_PromptCache {
         // Robustesse (a) : wp_json_encode() renvoie false si le payload contient de
         // l'UTF-8 invalide (données utilisateur mal encodées remontées par l'hôte).
         // Ré-encoder AVANT toute autre mutation garantit qu'on ne part jamais avec
-        // un body vide ni un header beta orphelin : on rend $args tel quel.
+        // un body vide : on rend $args tel quel.
         $encoded = wp_json_encode($payload);
         if (!is_string($encoded)) {
             return $args;
         }
 
-        // Header beta requis pour la TTL 1 h. Si on ne peut pas l'ajouter sans
-        // casser des headers existants, on renonce à TOUTE la mutation : envoyer
-        // ttl=1h sans le header beta est une erreur API, pas une dégradation.
-        if (MxChat_Plus_PromptCache_Models::using_extended_ttl()) {
+        // Ancien header beta de la TTL 1 h. Anthropic ne l'exige plus depuis le
+        // 13 août 2025 : on l'envoie encore par compatibilité (comptes ou proxys
+        // qui le demandaient), seulement quand il s'ajoute sans risque, et son
+        // absence n'annule plus jamais la mutation du body. Décidé sur le payload
+        // FINAL, pas sur la seule TTL du module : enforce_ttl_order() peut
+        // produire du 1 h même en mode 5 min.
+        /**
+         * Envoyer l'ancien header `anthropic-beta: extended-cache-ttl-2025-04-11`
+         * quand la requête porte un breakpoint 1 h ? Vrai par défaut.
+         *
+         * @param bool  $send true par défaut.
+         * @param array $args Arguments HTTP WordPress.
+         */
+        if ($extended && (bool) apply_filters('mxchat_plus_promptcache_send_extended_ttl_header', true, $args)) {
             $headers = self::with_extended_ttl_header($args['headers'] ?? []);
-            if ($headers === null) {
-                return $args;
+            if ($headers !== null) {
+                $args['headers'] = $headers;
             }
-            $args['headers'] = $headers;
         }
 
         $args['body'] = $encoded;
@@ -262,7 +474,8 @@ class MxChat_Plus_PromptCache {
      * Robustesse (b) : ne JAMAIS écraser une valeur non-tableau — WP_Http accepte
      * aussi un bloc de headers bruts sous forme de chaîne, et l'écraser détruirait
      * le `x-api-key` du plugin hôte (⇒ 401 sur tous les appels Anthropic).
-     * Une chaîne est donc convertie ligne à ligne ; tout autre type fait renoncer.
+     * Une chaîne est donc convertie ligne à ligne ; tout autre type fait renoncer
+     * au header (pas au body : la TTL 1 h ne dépend plus du header).
      *
      * Robustesse (c) : les en-têtes HTTP sont insensibles à la casse. La lecture
      * passe par array_change_key_case() et la réécriture cible la clé réellement
@@ -330,7 +543,8 @@ class MxChat_Plus_PromptCache {
      * providers supportés (cache automatique inclus).
      *
      * @param mixed $response Réponse HTTP WP (array) ou WP_Error.
-     * @param mixed $args     Arguments de la requête (inutilisés, signature du filtre).
+     * @param mixed $args     Arguments de la requête (body lu pour distinguer
+     *                        l'appel file_search de la Responses API).
      * @param mixed $url      URL appelée.
      * @return mixed La réponse, inchangée.
      */
@@ -353,7 +567,7 @@ class MxChat_Plus_PromptCache {
             return $response;
         }
 
-        $model          = $usage['model'];
+        $model          = $usage['model'] . MxChat_Plus_PromptCache_Stats::request_label($endpoint, $args);
         $cache_creation = $usage['cache_creation'];
         $cache_read     = $usage['cache_read'];
         $input          = $usage['input'];

@@ -4,7 +4,7 @@ Tags: mxchat, vector-search, duckdb, prompt-caching, matomo
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 8.1
-Stable tag: 1.0.0
+Stable tag: 1.1.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -23,19 +23,23 @@ cloud, instead of Pinecone or the slow MySQL fallback. It emulates the Pinecone 
 protocol over a REST endpoint, so MxChat needs no changes to use it.
 
 * Two backends — embedded `.duckdb` file, or MotherDuck via DuckDB's native `ATTACH 'md:…'`.
-* HNSW-indexed similarity search through DuckDB's VSS extension.
+* Similarity search through DuckDB's VSS extension, keyed per bot and vector id like Pinecone
+  namespaces, with MxChat's role restrictions honoured on every match.
+* Opt-in routing: the default bot (Default-bot routing) and, with MxChat's Multi-Bot add-on,
+  all bots or a chosen list. Your stored Pinecone settings are never overwritten.
 * Local mirror for MotherDuck installs: a local `.duckdb` shadow with HNSW for fast reads,
   while MotherDuck stays the canonical store. Resumable bootstrap, drift detection.
 * Optional hybrid BM25 + vector retrieval via DuckDB FTS.
 * Query result cache keyed by embedding hash + filter + bot, invalidated on write.
 * Per-source dedup and a custom reranker hook.
-* Four ingestion paths: MySQL bulk sync, synchronous post reprocess, async reprocess via
-  Action Scheduler, and a one-shot Pinecone import that does not re-embed.
+* Four ingestion paths: MySQL bulk sync, synchronous post reprocess (built with MxChat's own
+  content assembler), async reprocess via Action Scheduler, and a one-shot Pinecone import —
+  classic or document index, one namespace or all — that does not re-embed.
 * Parquet export/import for backups and moves between backends.
 * Optional INT8 quantization — 4x smaller vectors, marginal recall loss.
 * Per-namespace REST tokens, rate limiting, rolling p50/p95/p99 latency metrics,
   `/health` endpoint, daily orphan compactor, multisite-aware uninstall.
-* WP-CLI: `wp mxchat-plus duckdb {test|stats|sync|reprocess|async-reprocess|compact|metrics|cache|export|import|migrate-from-pinecone}`.
+* WP-CLI: `wp mxchat-plus duckdb {test|stats|sync|reprocess|async-reprocess|compact|metrics|cache|export|import|migrate-from-pinecone|mirror-bootstrap|mirror-drain|mirror-drift-check}`.
 
 = Module 2 — Anthropic prompt caching =
 
@@ -44,15 +48,20 @@ prefixes are billed at roughly a tenth of the input price, and measures cached t
 across every supported provider.
 
 * Up to 4 breakpoints: tool definitions, the system prompt, and a *rolling* pair on the
-  last two user messages — the write breakpoint of one turn becomes the read breakpoint
-  of the next, so the hit rate stays flat as the conversation grows.
+  visitor's last two raw messages — the write breakpoint of one turn (the visitor's message)
+  becomes the read breakpoint of the next, so the hit rate stays flat as the conversation
+  grows. MxChat's per-turn knowledge-base block is never marked, since the next turn does not
+  send it again; inside the AI Tools loop, short-lived 5-minute breakpoints are used.
+* A system prompt that changes every minute (MxChat's `{current_datetime}` placeholder) is
+  recognised and left uncached rather than paid for on every request.
 * Per-model minimum-prefix thresholds, because Anthropic ignores `cache_control`
   silently when the prefix is too short and the minimum varies **by model version**.
-* Injection on Anthropic only. OpenAI, OpenRouter, xAI, DeepSeek and Gemini cache
-  server-side on their own; the module measures their cached tokens for a unified
-  savings dashboard without touching their requests.
+* Injection on Anthropic only. OpenAI (Chat Completions and Responses), OpenRouter, xAI,
+  DeepSeek, Gemini (native and OpenAI-compatible) and MxChat's custom provider cache
+  server-side on their own; the module measures their cached tokens for a unified savings
+  dashboard without touching their requests.
 * Admin dashboard widget plus `wp mxchat-plus promptcache {stats|debug|reset}`.
-* Four filters to tune behaviour without forking.
+* Six filters to tune behaviour without forking.
 
 = Module 3 — Transcripts CSV export =
 
@@ -60,13 +69,18 @@ Adds an export button to MxChat's transcripts screen (**admin.php?page=mxchat-tr
 next to the host's **Delete Selected** control. MxChat's own export dumps the whole
 transcripts table and ignores the checkboxes; this one exports what you actually asked for.
 
-* Tick one or more conversations and click the button to export exactly those.
+* Tick one or more conversations and click the button to export exactly those. The
+  selection is kept across pages, search, sorting and refresh — the same selection MxChat
+  counts and deletes.
 * Click it with nothing ticked and a modal — styled like the host's own dialogs — asks for
   a start and an end date, then exports every conversation in that period. Both bounds are
-  inclusive, from 00:00:00 on the first day to 23:59:59 on the last.
-* CSV columns: Session ID, Email, User identifier, Role, Message, Timestamp — one row per
-  message, ordered by conversation then chronologically, with a UTF-8 BOM so Excel reads
-  accented characters correctly.
+  inclusive site-time days, from 00:00:00 on the first to 23:59:59 on the last.
+* Open a conversation and use **Export this conversation (CSV)**, next to MxChat's own
+  export button in the details drawer, to export just that one.
+* CSV columns: Session ID, Email, User identifier, Role, Message, Timestamp (UTC) — the
+  host's own six, in its order — then Name and Originating page. One row per message,
+  ordered by conversation then chronologically, RFC 4180 quoting, and a UTF-8 BOM so Excel
+  reads accented characters correctly.
 * Hardened: `manage_options`, its own nonce, prepared statements whose placeholder list is
   built from the *count* of session ids, strict date validation, a ceiling of 2000
   conversations per export, and neutralisation of CSV formula injection — chat messages are
@@ -85,9 +99,10 @@ on public pages and the only one that sends data to a third party.
   `Clic lien externe` and `Clic suggestion`. The site id is the one in the Matomo snippet
   already on the page — there is nothing to enter. External links are additionally reported
   as outlinks.
-* **Google Analytics 4** (optional): `mxchat_link_click` and `mxchat_suggestion_click`,
-  with the URL, link text, internal/external scope, target, bot id and session id. Requires
-  `gtag()` to be loaded by something else; the module never injects the GA4 tag.
+* **Google Analytics 4** (optional): `mxchat_link_click`, `mxchat_suggestion_click` and,
+  opt-in, `mxchat_chat_open`, with the URL, link text, internal/external scope, target, bot
+  id and session id. Requires `gtag()` to be loaded by something else; the module never
+  injects the GA4 tag.
 * The conversation's session id can be attached to every event, either in a Matomo custom
   dimension you nominate or appended to the event name. It can also be switched off — it is
   a join key into the transcripts table, and analytics vendors sit outside MxChat's own
@@ -97,16 +112,22 @@ on public pages and the only one that sends data to a third party.
   into a ranked report — clicks, distinct sessions, internal/external, last click — with a
   CSV export. IP and user agent are deliberately never shown: the host destroys them after
   30 days by design.
+* **Chat opened** (optional, off by default): the Matomo action `Ouverture chat` and the GA4
+  event `mxchat_chat_open`, at most once per chatbot per page load. A chatbot embedded in the
+  page is never reported. Needs MxChat 3.2.22 or later.
 * Both counts measure different things and will not match: ad-blockers suppress the analytics
   events but never the host's table, and the host's table never recorded relative links or
   suggested questions.
-* Nothing is sent, and no script is even enqueued, while both destinations are off.
+* Nothing is sent, and no script is even enqueued, while both destinations are off. With
+  MxChat's "Only load chatbot files where the chatbot appears" (smart asset loading) on,
+  pages without a chatbot get no script either.
 
 = Requirements =
 
 * PHP 8.1+
 * WordPress 6.0+
 * [MxChat](https://wordpress.org/plugins/mxchat-basic/) (`mxchat-basic`) 3.2.21 or newer
+  (the integration was checked against the MxChat 3.2.25 source)
 * For the vector store: the PECL `duckdb` extension (preferred) or the `duckdb` CLI binary
 * For MotherDuck: a token from [app.motherduck.com](https://app.motherduck.com)
 
@@ -117,8 +138,8 @@ on public pages and the only one that sends data to a third party.
 2. Activate **MxChat Plus** — after MxChat itself.
 3. For the vector store: go to **MxChat &rarr; DuckDB / MotherDuck**, choose a backend,
    click **Test connection**, then pick an ingestion strategy.
-4. For prompt caching: turn **off** streaming in the MxChat settings (see the FAQ), then
-   do nothing else — it engages automatically.
+4. For prompt caching: turn **off** streaming in the MxChat settings (see the FAQ) — unless
+   MxChat's AI Tools answer your chat — then do nothing else: it engages automatically.
 5. For the transcripts export: nothing to set up — open MxChat's transcripts screen and use
    the download button next to **Delete Selected**.
 
@@ -129,9 +150,16 @@ on public pages and the only one that sends data to a third party.
 Almost always because MxChat streaming is still enabled. MxChat streams Claude responses
 with raw `curl_exec()` rather than `wp_remote_post()`, which bypasses the WordPress HTTP
 API — the `http_request_args` filter the module uses is never called, so nothing can be
-injected. Disable streaming in **MxChat &rarr; Settings** and the chat falls back to the
-`wp_remote_post()` branch, which is fully interceptable. You lose the typewriter effect
-and gain roughly 85-95% input-token cost reduction once the cache is warm.
+injected (MxChat's own 5-minute system-prompt breakpoint still applies). Disable streaming
+in **MxChat &rarr; Settings** and the chat falls back to the `wp_remote_post()` branch,
+which is fully interceptable. You lose the typewriter effect and gain roughly 85-95%
+input-token cost reduction once the cache is warm.
+
+One exception: with MxChat's **AI Tools** active and a Claude model (MxChat 3.2.22 or
+later), most replies already arrive through its buffered tool loop and are cached even with
+streaming on, so turning streaming off changes little. **MxChat Plus &rarr; Modules** shows
+which case applies. A system prompt using `{current_datetime}` changes every minute and is
+deliberately left uncached.
 
 = Retrieval returns no matches after switching to DuckDB. Why? =
 
@@ -146,8 +174,11 @@ domain (MxChat hardcodes `https://`), pretty permalinks (not the "Plain" setting
 No. Never. All four modules attach through WordPress hooks. The host plugin's own options,
 filters, AJAX actions and nonces are used verbatim and are never renamed. An optional
 patch shipped under `tools/patches/` would let the vector store skip one HTTP hop, but it
-targets a filter that does not exist in mxchat-basic 3.2.21, it is inert by default, and
-applying it means editing the host plugin (which a MxChat update will revert).
+targets a filter that does not exist in mxchat-basic (verified absent in 3.2.25), it no longer
+applies to current MxChat versions, it is inert by default, and applying it means editing the
+host plugin (which a MxChat update will revert). With Default-bot routing on, MxChat's own
+Pinecone settings row is read through a filter and its saves are corrected so your real
+Pinecone credentials are kept — nothing of MxChat's is rewritten.
 
 = The CSV export button does not show up. Why? =
 
@@ -155,8 +186,7 @@ Three usual causes. The module may be off — check **MxChat Plus &rarr; Modules
 not be on MxChat's transcripts screen: the script is only loaded on
 `admin.php?page=mxchat-transcripts`. Or your account lacks `manage_options`, in which case
 nothing is loaded at all. The button is injected next to the host's **Delete Selected**
-control, and re-injected automatically after paging, sorting or searching re-renders the
-list.
+control, in a toolbar that paging, sorting and searching leave in place.
 
 = Which backend should I pick? =
 
@@ -172,17 +202,21 @@ Syncing from an existing MySQL table re-uses stored embeddings and costs nothing
 
 = What happens when I delete the plugin? =
 
-`uninstall.php` removes the plugin's own options, transients, scheduled events and the
-embedded data directory, with multisite support. The host plugin's data is left alone.
+`uninstall.php` removes the plugin's own options, transients and scheduled events, with
+multisite support. The embedded DuckDB data file is kept unless you opt in (the constant
+`MXCHAT_PLUS_DELETE_DATA_ON_UNINSTALL`, or the option `mxchat_plus_duckdb_delete_data_on_uninstall`),
+because it may hold hours of embedding work; tables on MotherDuck are never touched. The
+host plugin's data is left alone.
 
 = Is it translated? =
 
-Source strings are English (vector store) and French (prompt cache); a complete French
-catalogue ships compiled. The `.pot` template is included for other locales. The text
-domain is `mxchat-plus` and nothing else.
+Source strings are English throughout; a complete French catalogue ships compiled. The
+`.pot` template is included for other locales. The text domain is `mxchat-plus` and nothing
+else.
 
-One deliberate exception: the three Matomo action labels sent by the tracking module
-(`Clic lien interne`, `Clic lien externe`, `Clic suggestion`) are **not** translatable.
+One deliberate exception: the four Matomo action labels sent by the tracking module
+(`Clic lien interne`, `Clic lien externe`, `Clic suggestion`, `Ouverture chat`) are **not**
+translatable.
 They are analytics dimensions, not interface text — translating them would start a fresh
 set of rows in Matomo and split the site's click history in two.
 
@@ -193,9 +227,18 @@ MxChat fills server-side, which only ever recorded absolute `http(s)` links insi
 — never a relative link, never a suggested question. The Matomo events cover all of those,
 but ad-blockers suppress them, while the server-side table is never affected. Expect the
 report to be lower on suggestions and relative links, and higher wherever visitors block
-analytics.
+analytics. MxChat's own counts are also not comparable across its 3.2.24 and 3.2.25 updates,
+which changed which clicks it logs; compare sessions rather than clicks across those dates.
 
 == Changelog ==
+
+= 1.1.0 =
+* Compatibility with MxChat 3.2.25 (checked against its source; requires MxChat 3.2.21 or newer).
+* Security: with DuckDB serving MxChat, entries restricted to a role were served to every visitor. Roles are now read from MxChat's own table.
+* Prompt caching: breakpoints no longer land on MxChat's per-turn context block; a system prompt using {current_datetime} is treated as volatile; AI Tools turns are cached even with streaming on; the Modules screen reads MxChat's real streaming setting.
+* Transcripts: the export keeps selections across pages and searches, converts date ranges to UTC, writes valid CSV, adds a Name column and an "Export this conversation" button.
+* Click tracking: follows MxChat's smart asset loading, reports the real link target, and can send an opt-in "chat opened" event.
+* DuckDB: schema v4 (one row per bot and vector id), new Pinecone proxy routes (GET fetch, list pagination, describe_index_stats), opt-in Multi-Bot routing, and safer compaction. Back up before updating; see the upgrade notice.
 
 = 1.0.0 =
 * Fixed (inherited from the pre-merge plugins): orphan compaction skipped up to 1000
@@ -231,6 +274,9 @@ analytics.
 The per-module history before the merge is preserved in `CHANGELOG.md`.
 
 == Upgrade Notice ==
+
+= 1.1.0 =
+With the DuckDB module on, the first request after the update rebuilds the vector table (schema v4). Take a backup first. Vectors a Multi-Bot bot already lost to another bot under 1.0.x must be re-imported.
 
 = 1.0.0 =
 Replaces the separate mxchat-duckdb and mxchat-promptcache plugins. Deactivate and delete

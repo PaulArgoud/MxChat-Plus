@@ -98,11 +98,13 @@ class MxChat_Plus_PromptCache_Admin {
         $total_input = $input + $cached + $creation;
         $hit         = $total_input > 0 ? ($cached / $total_input) * 100 : 0.0;
 
+        // Libellés sources en anglais (CLAUDE.md) : les anciens libellés français
+        // s'affichaient tels quels sur un site en anglais.
         $rows = [
-            __('Taux de hit (cache)', 'mxchat-plus') => number_format_i18n($hit, 1) . ' %',
-            __('Requêtes', 'mxchat-plus')            => number_format_i18n($requests),
-            __('Tokens lus du cache', 'mxchat-plus') => number_format_i18n($cached),
-            __('Tokens entrée bruts', 'mxchat-plus') => number_format_i18n($input),
+            __('Cache hit rate', 'mxchat-plus')         => number_format_i18n($hit, 1) . ' %',
+            __('Requests', 'mxchat-plus')               => number_format_i18n($requests),
+            __('Tokens read from cache', 'mxchat-plus') => number_format_i18n($cached),
+            __('Uncached input tokens', 'mxchat-plus')  => number_format_i18n($input),
         ];
 
         $html  = '<h3 style="margin:.5em 0 .25em;">' . esc_html($label) . '</h3>';

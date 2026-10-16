@@ -165,6 +165,30 @@ final class CliTest extends TestCase {
         $this->cli->migrate_from_pinecone([], ['api-key' => 'pcsk_xyz']);
     }
 
+    public function test_migrate_command_refuses_a_namespace_with_all_namespaces(): void {
+        $this->expectException(MxChat_Test_CliExit::class);
+        $this->expectExceptionMessageMatches('/all-namespaces/');
+        $this->cli->migrate_from_pinecone([], ['api-key' => 'k', 'host' => 'h', 'namespace' => 'a', 'all-namespaces' => true]);
+    }
+
+    public function test_migrate_command_refuses_an_unknown_index_type(): void {
+        $this->expectException(MxChat_Test_CliExit::class);
+        $this->expectExceptionMessageMatches('/index type/i');
+        $this->cli->migrate_from_pinecone([], ['api-key' => 'k', 'host' => 'h', 'index-type' => 'pod']);
+    }
+
+    public function test_migrate_reset_clears_the_saved_cursor(): void {
+        update_option(MxChat_Plus_DuckDB_Pinecone_Migrator::STATE_OPTION, ['host' => 'h', 'next_token' => 't']);
+        try {
+            // An unknown index type stops the run right after the reset.
+            $this->cli->migrate_from_pinecone([], ['api-key' => 'k', 'host' => 'h', 'reset' => true, 'index-type' => 'pod']);
+        } catch (MxChat_Test_CliExit $e) {
+            // expected
+        }
+        $this->assertFalse(get_option(MxChat_Plus_DuckDB_Pinecone_Migrator::STATE_OPTION, false));
+        $this->assertStringContainsString('cursor cleared', implode("\n", WP_CLI::$log_buf));
+    }
+
     // ─── async-reprocess ─────────────────────────────────────────────────
 
     public function test_async_reprocess_parses_post_types_csv_and_enqueues(): void {
@@ -172,6 +196,8 @@ final class CliTest extends TestCase {
         $GLOBALS['__test_wp_query_matcher'] = function (array $args) {
             return ['posts' => [1, 2], 'found_posts' => 2];
         };
+        // The enqueue runs MxChat's embedding preflight first.
+        update_option('mxchat_options', ['api_key' => 'sk-test', 'embedding_model' => 'text-embedding-3-small']);
 
         $this->cli->async_reprocess([], ['post-types' => 'post,page,product']);
 
@@ -210,6 +236,22 @@ final class CliTest extends TestCase {
         $this->assertNotEmpty(WP_CLI::$warning_buf,
             'a skipped run must emit ::warning, not ::success');
         $this->assertEmpty(WP_CLI::$success_buf);
+    }
+
+    public function test_compact_force_overrides_the_safety_valves(): void {
+        // Empty MySQL KB + vectors present: a plain run refuses, --force
+        // deletes. (The mock backend answers every scan with the same row,
+        // and the compactor stops on a short page.)
+        $GLOBALS['wpdb'] = new MxChat_Test_WPDB();
+        $GLOBALS['wpdb']->set_response('SELECT id, url AS source_url', function () { return []; });
+        $this->mock_conn->responses['SELECT vector_id, bot_id, source_url, content_type FROM'] = [['vector_id' => 'orphan', 'bot_id' => 'default']];
+
+        $this->cli->compact([], []);
+        $this->assertStringContainsString('refused to prune', WP_CLI::$warning_buf[0] ?? '');
+
+        WP_CLI::reset();
+        $this->cli->compact([], ['force' => true]);
+        $this->assertStringContainsString('Pruned 1 orphan', WP_CLI::$success_buf[0] ?? '');
     }
 
     // ─── reprocess (synchronous) ─────────────────────────────────────────

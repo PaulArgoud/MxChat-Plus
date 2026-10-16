@@ -9,10 +9,10 @@ walks through the supported backup, verification, and restore flows.
 
 | Item | Where | How |
 |---|---|---|
-| Vector data (the actual KB embeddings) | Embedded: `.duckdb` file on disk · MotherDuck: cloud tables | `wp mxchat-plus export --path=…` (Parquet) **or** filesystem copy of the `.duckdb` file (Embedded only) |
+| Vector data (the actual KB embeddings) | Embedded: `.duckdb` file on disk · MotherDuck: cloud tables | `wp mxchat-plus duckdb export --path=…` (Parquet) **or** filesystem copy of the `.duckdb` file (Embedded only) |
 | Plugin settings | `wp_options` row `mxchat_plus_duckdb_options` (+ sidecars) | Normal MySQL backup picks it up |
 | Pinecone-proxy auth tokens | `wp_options` rows `mxchat_plus_duckdb_proxy_token` and `mxchat_plus_duckdb_proxy_token_map` | Normal MySQL backup picks them up |
-| Mirror state (MotherDuck installs with mirror enabled) | `.duckdb` file at the resolved mirror path + `wp_options` rows for the bootstrap cursor / pending queue | Mirror is regenerable from MotherDuck via `wp mxchat-plus mirror-bootstrap --reset`; backing it up is **optional** |
+| Mirror state (MotherDuck installs with mirror enabled) | `.duckdb` file at the resolved mirror path + `wp_options` rows for the bootstrap cursor / pending queue | Mirror is regenerable from MotherDuck via `wp mxchat-plus duckdb mirror-bootstrap --reset`; backing it up is **optional** |
 
 The MotherDuck token is the only secret that doesn't show up in a regular
 WordPress backup if it lives in `wp-config.php` via the
@@ -27,7 +27,7 @@ file containing every vector + metadata.
 
 ```bash
 # One-off backup to a path of your choice:
-wp mxchat-plus export --path=/var/backups/mxchat-vectors-$(date +%Y%m%d).parquet
+wp mxchat-plus duckdb export --path=/var/backups/mxchat-vectors-$(date +%Y%m%d).parquet
 
 # Verify the file is non-empty and roughly the size you expect:
 ls -lh /var/backups/mxchat-vectors-*.parquet
@@ -56,24 +56,27 @@ Expected output (counts will obviously differ):
 ```
 
 A row count of zero on a non-empty install means the export ran but the table
-was empty when it did — check `wp mxchat-plus stats` to confirm.
+was empty when it did — check `wp mxchat-plus duckdb stats` to confirm.
 
 ## Restore — Parquet import
 
 ```bash
 # Drop the current contents and replace from the backup:
-wp mxchat-plus import --path=/var/backups/mxchat-vectors-YYYYMMDD.parquet
+wp mxchat-plus duckdb import --path=/var/backups/mxchat-vectors-YYYYMMDD.parquet
 ```
 
 Under the hood this creates a temporary view over the parquet file and
-runs `INSERT OR REPLACE INTO <table> SELECT * FROM <view>`. Existing rows
-with the same `vector_id` are overwritten; rows present in the current
+runs an `INSERT OR REPLACE INTO <table> (…) SELECT … FROM <view>` that
+names its columns (`Schema::copy_rows_sql()`), so a backup taken before
+schema v4 — no `row_key`, no metadata columns — restores into the current
+layout, with `row_key` recomputed. Existing rows with the same
+`(bot_id, vector_id)` are overwritten; rows present in the current
 table but absent from the backup remain. To get a clean replace, either:
 
 1. Recreate the backend first (delete the `.duckdb` file for Embedded mode,
    or `DROP TABLE` on MotherDuck) and re-activate the plugin so it
    reprovisions the schema, then import; **or**
-2. Run `wp mxchat-plus sync` after the import — incremental sync is
+2. Run `wp mxchat-plus duckdb sync` after the import — incremental sync is
    idempotent and will reconcile against the MySQL KB if you keep that
    as the source of truth.
 
@@ -106,16 +109,16 @@ file works on either side:
 
 ```bash
 # On the source server (e.g. Embedded → MotherDuck migration):
-wp mxchat-plus export --path=/tmp/mxchat-vectors.parquet
+wp mxchat-plus duckdb export --path=/tmp/mxchat-vectors.parquet
 scp /tmp/mxchat-vectors.parquet user@destination:/tmp/
 
 # On the destination server (now configured for MotherDuck):
-wp mxchat-plus import --path=/tmp/mxchat-vectors.parquet
+wp mxchat-plus duckdb import --path=/tmp/mxchat-vectors.parquet
 ```
 
-The embedding dimension, storage format (float32 vs int8), and table
-schema must match across the two sides; if they don't, the import will
-fail loudly. Adjust `embedding_dim` and `embedding_storage` in the
+The embedding dimension and storage format (float32 vs int8) must match
+across the two sides; if they don't, the import will fail loudly. The
+column layout need not: columns are matched by name. Adjust `embedding_dim` and `embedding_storage` in the
 destination's plugin settings before running `import`.
 
 ## What gets reconstructed automatically
@@ -130,7 +133,7 @@ You **don't** need to back up:
 - **Mirror state** (for MotherDuck installs with the mirror enabled) — the
   local mirror is fully regenerable from MotherDuck:
   ```bash
-  wp mxchat-plus mirror-bootstrap --reset
+  wp mxchat-plus duckdb mirror-bootstrap --reset
   ```
   See [docs/MIRROR.md](MIRROR.md) for the bootstrap status flow.
 - **Pinecone proxy tokens** — if `wp_options` is restored from a normal
@@ -149,13 +152,13 @@ Order of operations after a total loss of the WordPress install:
    land on a compatible snapshot).
 3. Activate. The plugin recreates the table and HNSW index.
 4. Either:
-   - Run `wp mxchat-plus import --path=<backup>.parquet` to restore from
+   - Run `wp mxchat-plus duckdb import --path=<backup>.parquet` to restore from
      the snapshot, **or**
-   - Run `wp mxchat-plus sync` if MxChat's MySQL KB is still intact — the
+   - Run `wp mxchat-plus duckdb sync` if MxChat's MySQL KB is still intact — the
      embeddings will be re-derived from the source content (free if you're
      re-using already-embedded rows; costs API calls if you ran the
      reprocess path instead).
-5. Verify with `wp mxchat-plus stats` + `wp mxchat-plus test`.
+5. Verify with `wp mxchat-plus duckdb stats` + `wp mxchat-plus duckdb test`.
 
 For MotherDuck installs the equivalent of step 4 is trivial: MotherDuck
 already has the data; just point the plugin at it and click **Test

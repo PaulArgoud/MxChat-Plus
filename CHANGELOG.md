@@ -12,8 +12,310 @@ This plugin is the merge of two previously separate plugins. From 1.0.0 onward t
 
 ## [Unreleased]
 
-Nothing pending. Everything shipped so far is in [1.0.0](#100--2026-09-12) below,
-click tracking included. New entries go here, categorised per Keep a Changelog.
+Nothing pending beyond 1.1.0 below.
+
+## [1.1.0] — not yet released
+
+Tracked by the GitHub milestone **1.1.0**. A compatibility pass against **MxChat 3.2.25** (from 3.2.21). Most of what it fixes is not
+a 3.2.25 regression: reading the new host source closely turned up defects that were already
+there, and they are fixed here too. Nothing in this release was exercised inside a running
+WordPress: it was checked against the MxChat 3.2.25 source, with the unit suite and PHPStan,
+and — for the DuckDB SQL — against real DuckDB 0.10.3, 1.0.0 and 1.5.6 engines (their Python
+packages behind a stand-in for the `duckdb` CLI) driven through the plugin's CLI path.
+
+### Upgrade notes
+
+- **DuckDB schema v4 runs by itself.** On first use after the update, the vector table is
+  rebuilt so that it is keyed on `(bot_id, vector_id)` (see *Fixed*). The rebuild copies the
+  rows to `<table>_v4_staging`, recreates the table and its indexes, copies them back and
+  drops the copy; it resumes on its own if interrupted, and runs on both sides of a MotherDuck
+  mirror. It **refuses**, and leaves the store unusable until fixed, when `embedding_dim` or
+  `embedding_storage` were changed in the settings without switching `table_name`: put the
+  settings back, or point `table_name` at a new table and re-sync. On MotherDuck, a leftover
+  `mxchat_vectors_v4_staging` table means a rebuild was interrupted; the next request resumes
+  from it.
+- **Re-import what one bot lost to another.** Before v4, a bot's upsert overwrote another
+  bot's row with the same id. Those rows cannot be recovered by the upgrade: on a Multi-Bot
+  site, re-import (or reprocess) the URLs of any bot whose answers lost content.
+- **Multi-Bot bots are no longer routed to DuckDB just because the module is enabled.**
+  On upgrade, an install keeps routing exactly the non-default bots that already have vectors
+  in DuckDB; bots with no vectors there — which answered from an empty namespace — go back
+  to their own storage. Review **MxChat → DuckDB / MotherDuck → Activation → Multi-Bot
+  routing** and save a choice.
+- **`wp mxchat-plus duckdb migrate-from-pinecone` no longer needs `--namespace=default`** —
+  that flag named a namespace that does not exist. Omit it for the default namespace.
+- **Browser scripts are cache-busted by the plugin version.** The tracking and transcripts
+  fixes below reach browsers once the version changes and the new files are fetched; a site
+  running this code under an unchanged version number should clear its page and browser
+  caches.
+
+### Security
+
+- **DuckDB: role restrictions are enforced again.** The Pinecone proxy reported
+  `role_restriction: public` on every match, so MxChat never consulted its own roles table and
+  served restricted entries to every visitor (since 3.2.21; widened by 3.2.22's per-page
+  access and custom roles). Roles are now read from MxChat's `{prefix}mxchat_pinecone_roles`
+  table after the query cache — including the page's own row for a `_chunk_N` match, which is
+  deliberately stricter than real Pinecone — and `public` is never claimed. A role change
+  applies on the next query.
+- **DuckDB: the proxy token can no longer reach Pinecone.** With Default-bot routing on,
+  MxChat's Pinecone card showed our token, and its document-index tools (Check index, Create
+  index, Suggest name, Migrate, Delete old index) sent it to `api.pinecone.io` and could record
+  the proxy as the index to migrate from. Those tools are refused while routing is on, any
+  request to `*.pinecone.io` carrying a proxy token is blocked, and a notice on MxChat's
+  Knowledge screen explains why the card shows the proxy's values.
+
+### Added
+
+- **DuckDB: `describe_index_stats`** on the proxy (GET and POST). The 3.2.22 Knowledge screen
+  shows a real vector count and pages its listing instead of stopping at a 500-vector sample.
+  A bot's token sees only its own namespace.
+- **DuckDB: Multi-Bot routing settings** under *Activation*: route every Multi-Bot bot, or a
+  list of bot ids. A routed bot reads and writes its own DuckDB namespace (named after its
+  bot id) and no longer sees the knowledge MxChat keeps in the WordPress database, which all
+  bots share; a bot on a Pinecone document index is never routed.
+- **DuckDB: metadata round-trips.** Upserts keep the page title, `parent_url_hash`,
+  `created_at` / `last_updated` (the host's own timestamps, never invented) and add-on
+  metadata keys (up to 4 KB per row), and fetch and query return them. kb-reimport's "also
+  refresh edited entries" and `--before`, listing dates and *Inspect* now work through the
+  proxy. As with Pinecone, a re-upsert replaces all of a row's metadata.
+- **DuckDB: hybrid search works on Option B with no code.** The visitor's text is captured
+  from the host filter `mxchat_retrieval_query` and carried in the `/query` body — only to our
+  own proxy, never to a real Pinecone index, at most 2000 characters. Before, the BM25 leg
+  never ran there: the documented recipe hooked an action MxChat does not have. Opt-in filter
+  `mxchat_plus_duckdb_proxy_follow_host_hybrid_toggle` lets MxChat's own *Hybrid keyword
+  boost* switch turn it on.
+- **DuckDB: Pinecone write mirror.** While DuckDB holds a copy imported from a real Pinecone
+  index, every successful delete or upsert MxChat sends to that index is replayed into DuckDB
+  — including the paths that have no hook (REST `DELETE /mxchat/v1/knowledge`, media
+  auto-sync, trash and unpublish, kb-reimport). Filter `mxchat_plus_duckdb_mirrored_pinecone_host`
+  (`''` turns it off). Deletes made in the Pinecone console are not seen.
+- **DuckDB: `migrate-from-pinecone` reads MxChat 3.2.22+ document indexes** (`--index-type`,
+  auto-detected through MxChat's own helpers), copies every namespace with `--all-namespaces`,
+  and gains `--bot-id` and `--reset`. Title, timestamps and add-on keys are carried.
+- **DuckDB: `wp mxchat-plus duckdb compact --force`**, to override the compactor's two new
+  refusals (see *Changed*) for one run.
+- **DuckDB: re-sync of rows MxChat rewrites in place.** An applied kb-reimport (AJAX or
+  `wp mxchat kb-reimport`) schedules a full MySQL sync five minutes later, and a role change
+  on a WordPress-stored entry re-syncs that row, through the new WP-cron event
+  `mxchat_plus_duckdb_kb_resync`.
+- **DuckDB: the settings page follows MxChat's embedding choice.** It shows the model MxChat
+  will embed with next (Custom Provider aware) and its dimension — from MxChat's own cache for
+  custom models (3.2.24+) — beside the stored vectors' model, and warns when they differ. The
+  *Detect dimension* button appears as soon as Custom Provider embeddings are on.
+- **DuckDB: the Pinecone filter compiler** supports `$and` / `$or` (nested), the `{field:
+  value}` shorthand and `$exists`; `title`, `parent_url_hash`, `created_at` and
+  `last_updated` are filterable.
+- **DuckDB: new filters** `mxchat_plus_duckdb_query_cache_max_top_k`,
+  `mxchat_plus_duckdb_compactor_max_orphan_ratio`,
+  `mxchat_plus_duckdb_proxy_internal_rate_limit_per_minute` and
+  `mxchat_plus_duckdb_proxy_fetch_include_values`; new metric counters
+  `filter_unknown_field`, `pinecone_mirror_deletes`, `pinecone_mirror_upserts`,
+  `pinecone_mirror_errors`. All documented in `docs/duckdb/HOOKS.md`.
+- **Prompt caching: more providers measured** — OpenAI's Responses API, Gemini's
+  OpenAI-compatible endpoint and MxChat's custom provider. For the last two, a response is
+  recorded only when it reports cached tokens, so a provider that reports nothing does not
+  show as a 0 % hit rate. Vector Store `file_search` calls are labelled `<model> (file_search)`.
+- **Prompt caching: `wp mxchat-plus promptcache debug`** prints the payload shape, whether the
+  system prompt was judged volatile and why, the TTLs lengthened, the tool inputs repaired and
+  a `context_block` breakpoint line. New filters `mxchat_plus_promptcache_volatile_system` and
+  `mxchat_plus_promptcache_send_extended_ttl_header`.
+- **Modules screen: version notice.** The *MxChat version* row says when the running MxChat is
+  older than the oldest supported version or newer than the last one checked
+  (`MxChat_Plus_Host::TESTED_UP_TO`, now 3.2.25). Informational only; nothing is switched
+  off.
+- **Transcripts: "Export this conversation (CSV)"**, next to MxChat's own *Export* in the
+  details drawer, exports only the open conversation (MxChat's button there dumps the whole
+  table).
+- **Transcripts: two columns** appended after the host's six — *Name* (the pre-chat name;
+  since 3.2.22 a lead can give a name without an e-mail) and *Originating page*, filled when
+  MxChat's table has it — so imports that read by position keep working.
+- **Click tracking: opt-in "chat opened" event** — Matomo action `Ouverture chat`, GA4 event
+  `mxchat_chat_open` — at most once per chatbot per page load, from MxChat's `mxchat:opened`
+  (3.2.22+). A chatbot embedded in the page is never reported. Off by default.
+- **Click tracking follows MxChat's "Only load chatbot files where the chatbot appears".**
+  With that host setting on, pages without a chatbot no longer get the tracker. With it off,
+  output is unchanged.
+- **Click tracking: MxChat's page-cache purge** now also fires when the tracking settings or
+  the module switches are saved, since both are printed into public pages (host filter
+  `mxchat_cache_purge_watched_options`; MxChat 3.2.25's owner switch is respected).
+
+### Changed
+
+- **DuckDB: `score` is always the raw cosine similarity.** The distance metric and the hybrid
+  blend now only select and order the top-K. Before, an `l2sq` install returned `-distance`
+  (zero or below, so MxChat dropped every match), `ip` an unbounded dot product, and hybrid a
+  min-max blend that let off-topic rows pass MxChat's similarity threshold and the 0.55
+  video-card floor.
+- **DuckDB: the proxy answers like Pinecone in more cases.** `topK` is clamped to 1..10 000;
+  results above `topK` 1000 are no longer cached (MxChat's random-vector admin sweeps had been
+  filling `wp_options`). A malformed filter or an unsupported operator answers HTTP 400; a
+  positive clause on a field DuckDB does not store now matches nothing instead of being
+  dropped, which widened results. A delete with `deleteAll` or a filter and no ids answers 400
+  instead of silently deleting nothing. Document-index paths answer a readable 501.
+- **DuckDB: MxChat's own proxy calls are signed and no longer rate-limited.** An HMAC header
+  added on `http_request_args` (bound to method, path, minute and token, keyed from
+  `wp_salt('auth')`) marks MxChat's loopback calls. They are exempt from the 120/min limit,
+  which now applies to external callers only; `/query` keeps a separate 600/min bucket. Bulk
+  admin flows (REST `DELETE /knowledge` × 50, bulk delete, kb-reimport) no longer fail with
+  429.
+- **DuckDB: Default-bot routing answers with your stored settings.** MxChat now sees its
+  stored Pinecone row with five keys replaced (use flag, API key, host, namespace, and an index
+  type forced to `vector`) instead of a fixed six-key array, so MxChat's Top K is honoured
+  under routing — it was always 50 — and its document-index bookkeeping is left alone.
+- **DuckDB: the compactor is far more conservative.** It never prunes a bot MxChat writes
+  through the proxy (recorded in the new option `mxchat_plus_duckdb_proxy_written_bots`, seeded
+  on first run with `default` when routing is on and every non-default bot already stored);
+  with the Multi-Bot add-on, only `default` is prunable. It never runs before a first MySQL
+  sync, refuses — and records the reason in *Last error* — when the MySQL knowledge base is
+  empty while vectors exist or when more than half of the scanned vectors look orphaned, scopes
+  every delete to its bot and flushes that bot's query cache. When it prunes an attachment, it
+  clears MxChat's media signature so the file is re-indexed on its next edit.
+- **DuckDB: "Reprocess all posts" builds the same text as MxChat's import.** It uses MxChat's
+  own content assembler (WooCommerce price, SKU, categories, tags and custom tabs, short
+  description, ACF, synced patterns), applies `mxchat_before_process_post`, passes the page
+  title (3.2.23+) and re-applies tag and per-page role restrictions after storing. It no longer
+  runs `the_content`. Media library files are not posts: the Diagnostics panel points to
+  MxChat → Knowledge → Import → Media for them.
+- **DuckDB: `async-reprocess` refuses the whole batch up front**, with MxChat's own reason,
+  when MxChat cannot embed for the bot, instead of queueing one failing job per post.
+- **DuckDB: when DuckDB starts serving the default bot from another store** (routing switched
+  on, or the backend, database, file or table changed while it is on), MxChat's media
+  auto-sync signatures are cleared (`MxChat_Utils::forget_all_attachment_signatures()`,
+  3.2.24+), so library files are indexed again on their next edit instead of being skipped
+  forever.
+- **DuckDB: the Diagnostics panel's Option B text** now depends on Default-bot routing; it
+  used to say "No action required" while the default bot was still on Pinecone or the
+  WordPress database.
+- **Prompt caching: the legacy extended-TTL beta header is optional.** Anthropic no longer
+  requires it for the 1-hour TTL; it is still sent when it can be added safely, and when it
+  cannot, the cache breakpoints are sent anyway instead of being abandoned.
+- **Prompt caching: source strings are English**, like the rest of the plugin (CLI, dashboard
+  widget, caching hint); the French text moved to the catalogue.
+- **Modules screen: the streaming row** says when AI Tools with a Claude model make most turns
+  cacheable even with streaming on (MxChat ≥ 3.2.22), that MxChat's own 5-minute system
+  breakpoint still applies to streamed replies, and — with the Multi-Bot add-on — that it
+  reflects the global settings. The *Native prompt cache* row now says MxChat's marker
+  already covers the tool definitions.
+- **Transcripts: the selection is kept across pages, search, sorting and Refresh**, and the
+  export takes exactly what MxChat counts as selected (it warns if the two disagree, and before
+  truncating at 2000). The ids travel as one JSON field, so PHP's `max_input_vars` cannot drop
+  part of a large selection.
+- **Transcripts: the CSV format.** The header reads *Timestamp (UTC)*. Quoting follows RFC 4180
+  (`fputcsv` without an escape character). Visitor messages are exported as MxChat's panel
+  shows them, without magic-quote backslashes or HTML entities. Rows are ordered by session,
+  timestamp, then id, so messages saved in the same second keep their order. The formula guard
+  now covers every text column.
+- **Click tracking: GA4's `link_target`** reports `_blank` for the links MxChat retargets
+  itself (intro message, replayed history, early clicks), and a middle- or right-click on a
+  suggested question is no longer reported as a suggestion click.
+- **Click tracking: the missing-table message** no longer says only activation creates
+  MxChat's click table (MxChat recreates it after every update), and the report notes that
+  counts are not comparable across the MxChat 3.2.24 and 3.2.25 updates.
+- **Documentation** re-verified against MxChat 3.2.25, citing host functions by name instead of
+  line numbers. `ARCHITECTURE.md` carries a multi-line-aware hook inventory: 75 hook names in
+  3.2.25, against 56 in 3.2.21 (the "53" quoted before came from a single-line grep). The
+  click-tracking rationale is rewritten: since 3.2.24 MxChat cancels no link click, so a
+  `preventDefault()` of ours would strand every link. `tools/patches/` is documented as not
+  applying to 3.2.21 or later (2 of 2 hunks fail on 3.2.25).
+
+### Fixed
+
+- **DuckDB: the schema v4 rebuild could lose every vector.** Two first requests after the
+  update could both run the destructive rebuild, and the one that dropped the table second
+  copied back an empty staging table. The rebuild now runs under a lock (an option row, taken
+  over after 30 minutes if its request died, removed on uninstall); a request that finds it
+  taken fails and retries later. An introspection failure — a dropped MotherDuck connection,
+  a file lock — no longer passes for a missing table, so v4 is never stamped over a table it
+  did not rebuild.
+- **DuckDB: `GET /vectors/fetch` and `/vectors/list` failed on an upgraded install** until
+  another request happened to migrate the table: they now run the schema migrations first.
+- **Prompt caching: AI Tools loop breakpoints that were never read.** A hop now skips its
+  5-minute write when the next hop cannot offer tools any more (call budget or depth reached,
+  or `tool_choice.disable_parallel_tool_use`, sent by MxChat ≥ 3.2.23). A volatile system
+  prompt no longer suppresses the in-loop pair: MxChat computes it once per turn and resends
+  it unchanged on every hop.
+- **Transcripts: "All" on an empty or reloaded list** no longer desynchronises the export's
+  copy of the selection from MxChat's. When MxChat counts selected conversations the export
+  can no longer see, it now says so and offers the date-range export instead of exporting a
+  partial selection.
+- **DuckDB: one bot could overwrite another bot's vectors.** MxChat reuses `md5(url)` ids in
+  every bot's namespace, and the table was keyed on the id alone. Schema v4 keys it on
+  `(bot_id, vector_id)`; deletes, the compactor cursor and the mirror bootstrap are bot-scoped.
+- **DuckDB: every `GET /vectors/fetch` got a 404** (since MxChat 3.2.20). Chat-time chunk
+  reassembly silently fell back to the matched chunks, View/Edit/Inspect said "Entry not found
+  in Pinecone.", the processed-content scan showed nothing as indexed, and kb-reimport stopped
+  with "Source index fetch failed (HTTP 404)". The proxy now answers `GET` with repeated `ids=`
+  (and `ids[N]=`), in Pinecone's response shape.
+- **DuckDB: `/vectors/list` ignored `paginationToken`.** Every listing MxChat pages through
+  stopped at the first page: REST `DELETE /knowledge` left chunks past the first 100,
+  kb-reimport scanned only the first page. Pages now follow an opaque `pagination.next`, in id
+  order, returned only while more ids exist.
+- **DuckDB: saving MxChat's Pinecone card under Default-bot routing corrupted its settings.**
+  The save wrote our proxy token, host and `use_pinecone` into `mxchat_pinecone_addon_options`;
+  since 3.2.22 it also wrote namespace `default` (which has no form field, so it stuck) and
+  reset the index type and the document-index fields. Turning the module off then left MxChat
+  calling a dead proxy. MxChat's sanitizer and document-index actions now see the real row, and
+  a save that posts our values back is put right before it is written. Known gap: on a site
+  where that option was never stored, the first save of the card is lost.
+- **DuckDB: the nightly compactor deleted vectors MxChat wrote through the proxy.** In
+  Pinecone mode MxChat writes no MySQL row, so every such vector looked orphaned and up to 5000
+  a night were deleted.
+- **DuckDB: every Multi-Bot bot was routed to the proxy with no opt-in**, while the MySQL sync
+  files the shared WordPress-database knowledge under `default` only — so those bots answered
+  from an empty namespace. See *Upgrade notes*.
+- **DuckDB: `migrate-from-pinecone` copied nothing from serverless indexes** (since the first
+  release): it sent `POST` to `/vectors/list` and `/vectors/fetch`, which Pinecone answers empty
+  or with an error. It now uses `GET`, with repeated `ids=`. Rows land under the vector's own
+  `metadata.bot_id` when `--bot-id` is not given, instead of always under the namespace.
+- **DuckDB: deleting an uploaded PDF page, a document upload or a long manual entry left its
+  chunks in a DuckDB copy.** `upload://…#page=N`, `upload://…` and `mxchat://…` identities were
+  emptied by `esc_url_raw()`; they are now sanitised exactly as MxChat does (3.2.24+).
+- **DuckDB: the incremental MySQL sync missed rows on sites west of UTC** — MxChat writes that
+  table's timestamps in site time — and never saw rows rewritten in place. The cutoff now
+  covers both renderings, rows with a newer id are always picked up, and in-place rewrites
+  trigger a re-sync (see *Added*).
+- **DuckDB: the native MySQL sync** dropped page titles, wrote no `row_key` (so BM25 never
+  found those rows after an FTS rebuild), and aborted entirely when MySQL held the same URL
+  twice. The PHP sync path dropped titles too.
+- **DuckDB: "Reprocess all posts" refused Custom Provider sites without an OpenAI key** with
+  "No embedding API key configured in MxChat." The decision is now MxChat's own
+  `MxChat_Utils::embedding_preflight()`; a Custom Provider without a Base URL gets a precise
+  message.
+- **DuckDB: a dimension probed for a custom model was reused after a base-URL change**; it is
+  now keyed on base URL and model, like MxChat's own cache.
+- **DuckDB: "Sync now" could lose its own timestamp.** In admin requests WordPress runs every
+  update of `mxchat_plus_duckdb_options` through the settings sanitiser, which put back the
+  stale stored `last_sync_at`. Fresh telemetry now survives, and updates merge onto the stored
+  row.
+- **Prompt caching: the rolling history breakpoint landed on MxChat's per-turn context block**
+  (date line, `User asked: '…'` and the knowledge-base excerpt), which MxChat never sends
+  again — so its 1-hour write premium was paid on every turn for nothing. The pair now sits on
+  the visitor's raw messages; one-message chats pay no history write; inside the AI Tools loop
+  short-lived 5-minute breakpoints are used, and the last hop gets none.
+- **Prompt caching: a `{current_datetime}` system prompt** (MxChat 3.2.22+) changes every
+  minute, yet the module lengthened MxChat's marker to 1 hour and stacked 1-hour history writes
+  behind it. Such a system prompt is now detected and left uncached; `{current_date}` stays
+  cacheable.
+- **Prompt caching: empty JSON objects survive.** Re-encoding the request turned `{}` into `[]`
+  — an AI Tool without arguments, a `tool_use` input — which Anthropic expects as an object; a
+  `tool_use` input MxChat itself sends as `[]` is repaired too.
+- **Modules screen: streaming was always reported Off.** The check read option keys MxChat
+  never wrote; it now reads `enable_streaming_toggle` exactly as MxChat's server does.
+- **Transcripts: ticks made on other pages or before a search were ignored** by the export,
+  although MxChat counts and deletes them.
+- **Transcripts: date ranges were off by the site's UTC offset** at both ends. The chosen days
+  are now site-time days converted to UTC, each bound with its own daylight-saving offset.
+- **Transcripts: quoting.** A backslash before a quote in a message was written unescaped (PHP's
+  default CSV escape character), so spreadsheet programs that follow RFC 4180 could shift the
+  rest of the row into the wrong columns.
+- **Click tracking: the clicked-links table showed an empty URL column**, and the totals line
+  always said "on 0 links".
+- **Click tracking: a fresh visitor's first suggestion click carried no session id**, although
+  MxChat creates one in the same click; and events after *Start new chat* carried the previous
+  conversation's id.
+- **Click tracking: report date ranges** are site-time days converted to UTC, like the
+  transcripts export.
 
 ## Roadmap
 
@@ -30,13 +332,22 @@ Not a release section — nothing below is written yet, so none of it belongs un
 - Auto-reconciliation of drifted `bot_id`s: queue a per-bot scoped re-bootstrap instead of
   asking the operator to run `mirror-bootstrap --reset` by hand.
 - Submit the `mxchat_pre_vector_query` short-circuit filter upstream. It is still absent
-  from mxchat-basic 3.2.21, so `tools/patches/` stays optional and inert.
+  from mxchat-basic 3.2.25, so `tools/patches/` stays optional and inert.
 - Ask upstream for a filter on the Claude streaming payload (just before
   `curl_setopt(CURLOPT_POSTFIELDS, …)`), which would let prompt caching work without
-  turning streaming off.
-- English source strings for the prompt-cache module, so the catalogue stops mixing
-  English and French msgids.
-- PDF / attachment reprocessing; per-bot configuration UI for multi-bot installs.
+  turning streaming off. (AI Tools already make most Claude turns cacheable on 3.2.22+.)
+- DuckDB: write the top-K `ORDER BY` in a form DuckDB VSS turns into an HNSW index scan.
+  `EXPLAIN` on 0.10.3, 1.0.0 and 1.5.6 shows the current forms never are; whether the switch
+  keeps `bot_id` filtering exact for minority bots is untested.
+- DuckDB: upsert by `DELETE` + `INSERT` instead of `INSERT OR REPLACE`, which fails over an
+  existing row with an `ARRAY` column on DuckDB before 1.1 ("Array Update is not supported").
+- DuckDB hybrid: refresh the FTS index after writes (it is static between migrations), use a
+  digit-preserving tokenizer so SKU-style codes match, and keep BM25-only hits.
+- DuckDB: an admin checkbox for following MxChat's *Hybrid keyword boost* switch (today the
+  filter `mxchat_plus_duckdb_proxy_follow_host_hybrid_toggle` only).
+- DuckDB: let a routed Multi-Bot bot also see the WordPress-database knowledge MxChat shares
+  between bots (needs an origin marker on synced rows).
+- Per-bot configuration UI for multi-bot installs beyond retrieval overrides and routing.
 
 ## [1.0.0] — 2026-09-12
 

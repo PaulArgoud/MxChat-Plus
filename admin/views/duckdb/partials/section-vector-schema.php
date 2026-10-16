@@ -2,8 +2,10 @@
 /**
  * @var array<string, mixed> $opts
  * @var int    $detected_dim
- * @var string $active_embedding_model
- * @var bool   $embedding_model_is_custom
+ * @var string $active_embedding_model    model of the vectors MxChat already stored
+ * @var string $selected_embedding_model  model MxChat's next embed will use
+ * @var int    $selected_embedding_dim    its dimension, 0 when unknown
+ * @var bool   $embedding_model_is_custom true when the selection is a Custom Provider
  */
 if (!defined('ABSPATH')) { exit; }
 ?>
@@ -24,11 +26,38 @@ if (!defined('ABSPATH')) { exit; }
                 );
                 ?>
             </p>
+            <?php
+            // The stamp describes the vectors already stored, the selection
+            // the ones to come: both are shown, never swapped silently.
+            $selected_model = isset($selected_embedding_model) ? (string) $selected_embedding_model : '';
+            $active_model   = isset($active_embedding_model) ? (string) $active_embedding_model : '';
+            if ($selected_model !== '' && $active_model !== '' && $selected_model !== $active_model): ?>
+                <p class="description" style="margin-top:6px;color:#996800;">
+                    <?php
+                    if (!empty($selected_embedding_dim)) {
+                        printf(
+                            /* translators: 1: model MxChat will embed with next, 2: its dimension, 3: model of the stored vectors */
+                            esc_html__('MxChat\'s embedding setting now selects %1$s (%2$d dimensions), but its stored vectors were made with %3$s. New content will be embedded with %1$s, so the dimension here must match it: wipe the table and re-sync after switching.', 'mxchat-plus'),
+                            esc_html($selected_model),
+                            (int) $selected_embedding_dim,
+                            esc_html($active_model)
+                        );
+                    } else {
+                        printf(
+                            /* translators: 1: model MxChat will embed with next, 2: model of the stored vectors */
+                            esc_html__('MxChat\'s embedding setting now selects %1$s, but its stored vectors were made with %2$s. Run Detect dimension to read the new model\'s size, then wipe the table and re-sync.', 'mxchat-plus'),
+                            esc_html($selected_model),
+                            esc_html($active_model)
+                        );
+                    }
+                    ?>
+                </p>
+            <?php endif; ?>
             <?php if (!empty($embedding_model_is_custom)): ?>
                 <p class="description" style="margin-top:6px;">
                     <strong><?php esc_html_e('Custom / Azure OpenAI embeddings detected.', 'mxchat-plus'); ?></strong>
                     <?php esc_html_e(
-                        'MxChat is embedding through a custom provider, whose output dimension is not in any registry — the number above is a placeholder. Probe your endpoint to fill in the real value, then Save.',
+                        'MxChat is embedding through a custom provider, whose output dimension is not in any registry: until this plugin or MxChat has probed the endpoint, the number above is a placeholder. Probe your endpoint to fill in the real value, then Save.',
                         'mxchat-plus'
                     ); ?>
                     <br>

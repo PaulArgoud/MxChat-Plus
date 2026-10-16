@@ -26,6 +26,7 @@ final class OptionsSanitizeTest extends TestCase {
         $GLOBALS['__test_options']         = [];
         $GLOBALS['__test_transients']      = [];
         $GLOBALS['__test_settings_errors'] = [];
+        MxChat_Utils::$forgotten_all_signatures = [];
     }
 
     private function sanitize(array $input): array {
@@ -367,9 +368,159 @@ final class OptionsSanitizeTest extends TestCase {
         $this->assertSame(0, MxChat_Plus_DuckDB_Options::probed_custom_dim('custom:nomic-embed-text'));
     }
 
+    public function test_detect_dim_for_a_custom_model_reads_mxchats_own_cache(): void {
+        // MxChat 3.2.24+ caches its own probe in mxchat_custom_embedding_dimension,
+        // keyed md5(lowercased base URL . '|' . model).
+        update_option('mxchat_options', [
+            'custom_provider_for_embeddings' => 'on',
+            'custom_provider_base_url' => 'HTTP://Ollama.Local:11434/v1/',
+            'custom_provider_embedding_model' => 'bge-m3',
+        ]);
+        update_option('mxchat_active_embedding_model', 'custom:bge-m3');
+        update_option('mxchat_custom_embedding_dimension', [
+            'key' => md5('http://ollama.local:11434/v1|bge-m3'), 'model' => 'custom:bge-m3', 'dimension' => 1024,
+        ]);
+        $this->assertSame(1024, MxChat_Plus_DuckDB_Options::detect_embedding_dim());
+
+        // Another endpoint, same model name: MxChat's cached size is not reused.
+        update_option('mxchat_options', [
+            'custom_provider_for_embeddings' => 'on',
+            'custom_provider_base_url' => 'https://other.example/v1',
+            'custom_provider_embedding_model' => 'bge-m3',
+        ]);
+        $this->assertSame(1536, MxChat_Plus_DuckDB_Options::detect_embedding_dim(), 'placeholder');
+    }
+
+    public function test_our_probe_is_invalidated_by_a_base_url_change(): void {
+        update_option('mxchat_options', ['custom_provider_for_embeddings' => 'on', 'custom_provider_base_url' => 'http://a/v1', 'custom_provider_embedding_model' => 'm']);
+        update_option('mxchat_active_embedding_model', 'custom:m');
+        MxChat_Plus_DuckDB_Options::store_probed_custom_dim('custom:m', 768);
+        $this->assertSame(768, MxChat_Plus_DuckDB_Options::detect_embedding_dim());
+
+        update_option('mxchat_options', ['custom_provider_for_embeddings' => 'on', 'custom_provider_base_url' => 'http://b/v1', 'custom_provider_embedding_model' => 'm']);
+        $this->assertSame(0, MxChat_Plus_DuckDB_Options::probed_custom_dim('custom:m'));
+    }
+
+    public function test_selected_model_is_reported_beside_the_stamp_not_instead_of_it(): void {
+        // The stamp describes the stored vectors, the selection the next ones.
+        update_option('mxchat_active_embedding_model', 'text-embedding-3-small');
+        update_option('mxchat_options', ['custom_provider_for_embeddings' => 'on', 'custom_provider_embedding_model' => 'nomic-embed-text']);
+
+        $this->assertSame('custom:nomic-embed-text', MxChat_Plus_DuckDB_Options::selected_embedding_model());
+        $this->assertSame(1536, MxChat_Plus_DuckDB_Options::detect_embedding_dim(), 'still the stored vectors\' size');
+        $this->assertSame(0, MxChat_Plus_DuckDB_Options::selected_embedding_dim(), 'unknown until probed');
+        $this->assertTrue(MxChat_Plus_DuckDB_Options::custom_embeddings_enabled());
+    }
+
+    public function test_never_embedded_custom_site_uses_the_selection(): void {
+        update_option('mxchat_options', ['custom_provider_for_embeddings' => 'on', 'custom_provider_model' => 'qwen3']);
+        $this->assertSame('custom:qwen3', MxChat_Plus_DuckDB_Options::active_embedding_model());
+    }
+
+    public function test_selected_standard_model_honours_output_dimension_settings(): void {
+        update_option('mxchat_options', ['embedding_model' => 'voyage-3-large', 'voyage_output_dimension' => 1024]);
+        $this->assertSame(1024, MxChat_Plus_DuckDB_Options::detect_embedding_dim());
+    }
+
     public function test_is_custom_embedding_model_detects_custom_prefix(): void {
         $this->assertTrue(MxChat_Plus_DuckDB_Options::is_custom_embedding_model('custom:anything'));
         $this->assertFalse(MxChat_Plus_DuckDB_Options::is_custom_embedding_model('text-embedding-3-small'));
+    }
+
+    // ─── Multi-Bot routing ─────────────────────────────────────────────────
+
+    public function test_multibot_routing_defaults_off(): void {
+        $d = MxChat_Plus_DuckDB_Options::defaults();
+        $this->assertFalse($d['takeover_multibot_bots']);
+        $this->assertSame([], $d['takeover_bot_ids']);
+        $out = $this->sanitize(['takeover_bot_ids' => '']);
+        $this->assertFalse($out['takeover_multibot_bots']);
+        $this->assertSame([], $out['takeover_bot_ids']);
+    }
+
+    public function test_bot_ids_are_parsed_deduplicated_and_reserved_ids_dropped(): void {
+        $out = $this->sanitize([
+            'takeover_multibot_bots' => '1',
+            'takeover_bot_ids'       => " sales, support\nsales default,testing , <b>vip</b>",
+        ]);
+        $this->assertTrue($out['takeover_multibot_bots']);
+        $this->assertSame(['sales', 'support', 'vip'], $out['takeover_bot_ids']);
+    }
+
+    public function test_routing_is_kept_when_the_fields_are_not_posted(): void {
+        // A programmatic update_option() runs through this sanitiser too.
+        update_option(MXCHAT_PLUS_DUCKDB_OPTION_KEY, array_merge(MxChat_Plus_DuckDB_Options::defaults(), [
+            'takeover_multibot_bots' => false, 'takeover_bot_ids' => ['sales'],
+        ]));
+        $out = $this->sanitize(['mode' => 'embedded']);
+        $this->assertSame(['sales'], $out['takeover_bot_ids']);
+    }
+
+    public function test_unrecorded_routing_of_an_older_install_stays_unrecorded(): void {
+        $legacy = MxChat_Plus_DuckDB_Options::defaults();
+        unset($legacy['takeover_multibot_bots'], $legacy['takeover_bot_ids']);
+        update_option(MXCHAT_PLUS_DUCKDB_OPTION_KEY, $legacy);
+
+        $out = $this->sanitize(['mode' => 'embedded']);
+        $this->assertArrayNotHasKey('takeover_bot_ids', $out,
+            'stamping [] here would stop routing bots the install was serving');
+
+        $posted = $this->sanitize(['takeover_bot_ids' => 'sales']);
+        $this->assertSame(['sales'], $posted['takeover_bot_ids'], 'a real form save records the choice');
+    }
+
+    public function test_programmatic_telemetry_writes_survive_the_sanitiser(): void {
+        // register_setting() runs this sanitiser on every update_option() of
+        // the row in admin requests; Options::update() passes the full row.
+        update_option(MXCHAT_PLUS_DUCKDB_OPTION_KEY, array_merge(MxChat_Plus_DuckDB_Options::defaults(), ['last_sync_at' => 100]));
+        $row = array_merge(MxChat_Plus_DuckDB_Options::get(), ['last_sync_at' => 200, 'last_sync_max_id' => 9, 'last_error' => 'new']);
+        $out = $this->sanitize($row);
+        $this->assertSame(200, $out['last_sync_at']);
+        $this->assertSame(9, $out['last_sync_max_id']);
+        $this->assertSame('new', $out['last_error']);
+    }
+
+    // ─── Reactions to a settings save ──────────────────────────────────────
+
+    public function test_switching_the_store_under_the_takeover_forgets_host_media_signatures(): void {
+        $base = array_merge(MxChat_Plus_DuckDB_Options::defaults(), ['enabled' => true, 'takeover_default_bot_pinecone' => true]);
+
+        MxChat_Plus_DuckDB_Options::handle_settings_saved($base, array_merge($base, ['table_name' => 'vectors_1024']));
+        MxChat_Plus_DuckDB_Options::handle_settings_saved($base, array_merge($base, ['mode' => 'embedded']));
+        MxChat_Plus_DuckDB_Options::handle_settings_saved($base, array_merge($base, ['motherduck_database' => 'other']));
+        MxChat_Plus_DuckDB_Options::handle_settings_saved($base, array_merge($base, ['embedded_path' => '/x.duckdb']));
+        $this->assertSame(['default', 'default', 'default', 'default'], MxChat_Utils::$forgotten_all_signatures);
+    }
+
+    public function test_switching_the_takeover_on_forgets_host_media_signatures(): void {
+        $off = array_merge(MxChat_Plus_DuckDB_Options::defaults(), ['enabled' => true]);
+        MxChat_Plus_DuckDB_Options::handle_settings_saved($off, array_merge($off, ['takeover_default_bot_pinecone' => true]));
+        $this->assertSame(['default'], MxChat_Utils::$forgotten_all_signatures);
+
+        MxChat_Utils::$forgotten_all_signatures = [];
+        MxChat_Plus_DuckDB_Options::handle_settings_added(MXCHAT_PLUS_DUCKDB_OPTION_KEY, array_merge($off, ['takeover_default_bot_pinecone' => true]));
+        $this->assertSame(['default'], MxChat_Utils::$forgotten_all_signatures, 'first save of a fresh install');
+    }
+
+    public function test_unrelated_saves_keep_host_media_signatures(): void {
+        $on = array_merge(MxChat_Plus_DuckDB_Options::defaults(), ['enabled' => true, 'takeover_default_bot_pinecone' => true]);
+        MxChat_Plus_DuckDB_Options::handle_settings_saved($on, array_merge($on, ['last_sync_at' => 5, 'top_k' => 20]));
+
+        // DuckDB not serving the default bot: its store is not MxChat's concern.
+        $off = array_merge($on, ['takeover_default_bot_pinecone' => false]);
+        MxChat_Plus_DuckDB_Options::handle_settings_saved($off, array_merge($off, ['table_name' => 'other']));
+        $disabled = array_merge($on, ['enabled' => false]);
+        MxChat_Plus_DuckDB_Options::handle_settings_saved($disabled, array_merge($disabled, ['table_name' => 'other']));
+
+        $this->assertSame([], MxChat_Utils::$forgotten_all_signatures);
+    }
+
+    public function test_switching_the_module_off_under_the_takeover_forgets_host_media_signatures(): void {
+        // MxChat falls back to its stored backend, which never received the
+        // media DuckDB indexed: the signatures must not claim otherwise.
+        $on = array_merge(MxChat_Plus_DuckDB_Options::defaults(), ['enabled' => true, 'takeover_default_bot_pinecone' => true]);
+        MxChat_Plus_DuckDB_Options::handle_settings_saved($on, array_merge($on, ['enabled' => false]));
+        $this->assertSame(['default'], MxChat_Utils::$forgotten_all_signatures);
     }
 
     // ─── Per-bot overrides (v0.13.0) ──────────────────────────────────────

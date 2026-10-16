@@ -65,8 +65,8 @@ depending on network round-trip to MotherDuck.
 ```bash
 # Toggle the option, then trigger the bootstrap manually:
 wp option update mxchat_plus_duckdb_options '{"motherduck_mirror_enabled":true}' --format=json
-wp mxchat-plus mirror-bootstrap          # enqueues the first tick
-wp mxchat-plus mirror-bootstrap --step   # runs one tick synchronously (debug)
+wp mxchat-plus duckdb mirror-bootstrap          # enqueues the first tick
+wp mxchat-plus duckdb mirror-bootstrap --step   # runs one tick synchronously (debug)
 ```
 
 The `--step` flag runs a single batch inline, prints the resulting
@@ -79,9 +79,12 @@ diagnosing a stuck bootstrap.
 
 1. **Bootstrap (`status: 'bootstrapping'`)**. An Action Scheduler
    worker walks the MotherDuck → local copy in batches of 1000
-   vector_ids. Resumable via a persisted cursor (the last vector_id
-   seen). Reads still route to MotherDuck during bootstrap — no
-   stale-read window.
+   rows. Resumable via a persisted keyset cursor — the last
+   `(vector_id, bot_id)` pair seen, since one id can exist under
+   several bots (schema v4) — and a batch that comes back empty
+   completes the run. Columns are copied by name, so a primary that
+   has not migrated to schema v4 yet still lines up. Reads still
+   route to MotherDuck during bootstrap — no stale-read window.
 
 2. **Active (`status: 'active'`)**. Local count caught the target.
    The read path now serves HNSW-accelerated queries from local;
@@ -109,7 +112,7 @@ diagnosing a stuck bootstrap.
 | `disabled` | Toggle off, or never enabled. | None. |
 | `bootstrapping` | Initial copy in progress. | Wait for completion (~minutes). |
 | `active` | Mirror is in sync. Reads come from local. | None. |
-| `drifted` | Daily check found divergence. | `wp mxchat-plus mirror-bootstrap --reset`. |
+| `drifted` | Daily check found divergence. | `wp mxchat-plus duckdb mirror-bootstrap --reset`. |
 | `error` | Bootstrap or drain failed repeatedly. | Inspect via CLI / `/health`. |
 
 Read the status programmatically:
@@ -118,7 +121,7 @@ Read the status programmatically:
 $status = MxChat_Plus_DuckDB_Mirror_Bootstrap::get_status();
 $state  = MxChat_Plus_DuckDB_Mirror_Bootstrap::get_state();
 // $state has: started_at, target_count, processed_count,
-// last_vector_id, last_error, completed_at
+// last_vector_id, last_bot_id, last_error, completed_at
 ```
 
 Or via the health endpoint:
@@ -141,24 +144,24 @@ curl https://your-site/wp-json/mxchat-plus/v1/health | jq '.mirror'
 
 ## WP-CLI reference
 
-### `wp mxchat-plus mirror-bootstrap`
+### `wp mxchat-plus duckdb mirror-bootstrap`
 
 Trigger or step the initial MotherDuck → local copy.
 
 ```bash
-wp mxchat-plus mirror-bootstrap            # enqueue first tick
-wp mxchat-plus mirror-bootstrap --reset    # wipe state, restart from offset 0
-wp mxchat-plus mirror-bootstrap --step     # run one tick inline (debug)
+wp mxchat-plus duckdb mirror-bootstrap            # enqueue first tick
+wp mxchat-plus duckdb mirror-bootstrap --reset    # wipe state, restart from offset 0
+wp mxchat-plus duckdb mirror-bootstrap --step     # run one tick inline (debug)
 ```
 
-### `wp mxchat-plus mirror-drain`
+### `wp mxchat-plus duckdb mirror-drain`
 
 Replay the pending queue immediately instead of waiting for the
 5-minute cron tick.
 
 ```bash
-wp mxchat-plus mirror-drain                # run one drain pass
-wp mxchat-plus mirror-drain --status       # print counters without running
+wp mxchat-plus duckdb mirror-drain                # run one drain pass
+wp mxchat-plus duckdb mirror-drain --status       # print counters without running
 ```
 
 Output (after running):
@@ -167,12 +170,12 @@ Output (after running):
 Success: Drain: drained=12 retried=3 quarantined=0 remaining=0
 ```
 
-### `wp mxchat-plus mirror-drift-check`
+### `wp mxchat-plus duckdb mirror-drift-check`
 
 Compare primary and local per-bot_id, print a divergence report.
 
 ```bash
-wp mxchat-plus mirror-drift-check
+wp mxchat-plus duckdb mirror-drift-check
 ```
 
 On a clean install:
@@ -200,7 +203,7 @@ Warning: Drift on bot_ids=[bot_b]
 
 ### Bootstrap stuck in `'error'`
 
-1. `wp mxchat-plus mirror-bootstrap --step` to run a tick inline
+1. `wp mxchat-plus duckdb mirror-bootstrap --step` to run a tick inline
    and see the raw error.
 2. Common causes:
    - MotherDuck token expired or revoked → update in plugin
@@ -209,18 +212,18 @@ Warning: Drift on bot_ids=[bot_b]
      to a larger disk.
    - File permissions on `uploads/` → make the directory writable
      by the web server.
-3. After fixing the root cause: `wp mxchat-plus mirror-bootstrap`
+3. After fixing the root cause: `wp mxchat-plus duckdb mirror-bootstrap`
    (no `--reset`) to resume from the persisted cursor.
 
 ### Status keeps flipping to `'drifted'`
 
-1. `wp mxchat-plus mirror-drift-check` to see which bot_ids
+1. `wp mxchat-plus duckdb mirror-drift-check` to see which bot_ids
    diverged.
 2. If the count differs by ≤ 50 and `pending_count > 0` in the
    /health output, this is "drainable drift" — wait for the next
    5-minute drain tick and re-check.
 3. If the divergence is real, run
-   `wp mxchat-plus mirror-bootstrap --reset` to rebuild local
+   `wp mxchat-plus duckdb mirror-bootstrap --reset` to rebuild local
    from MotherDuck. Allow time proportional to the catalogue size.
 
 ### Quarantine count is growing
@@ -240,7 +243,7 @@ auto-recover — they represent writes whose specific SQL the system
 has given up replaying. The remediation is a full re-bootstrap:
 
 ```bash
-wp mxchat-plus mirror-bootstrap --reset
+wp mxchat-plus duckdb mirror-bootstrap --reset
 ```
 
 ### Reads are still slow after enabling

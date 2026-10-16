@@ -1,7 +1,7 @@
 <?php
 /**
  * Tracking options — the read/write path between the settings form and the
- * five values the front-end script is localized with.
+ * six values the front-end script is localized with.
  *
  * Three things here fail silently rather than loudly, which is why they are
  * locked:
@@ -10,7 +10,7 @@
  *     returned only what it was given would leave get() to resurrect the
  *     *default* — `true` for track_matomo and send_session_id. Unticking
  *     either would look like it had done nothing at all;
- *   - get() must materialise all five keys whatever the row holds, because
+ *   - get() must materialise all six keys whatever the row holds, because
  *     the localized object is built straight from it and a missing key
  *     becomes an `undefined` in the browser with no PHP-side trace;
  *   - migrate_legacy() runs once, and the only marker that it has run is the
@@ -35,7 +35,7 @@ final class TrackingOptionsTest extends TestCase {
 
     // ─── Defaults ─────────────────────────────────────────────────────────
 
-    public function test_defaults_are_the_five_documented_settings(): void {
+    public function test_defaults_are_the_six_documented_settings(): void {
         $this->assertSame(
             [
                 'track_matomo'        => true,
@@ -43,9 +43,16 @@ final class TrackingOptionsTest extends TestCase {
                 'send_session_id'     => true,
                 'matomo_dimension_id' => 0,
                 'debug'               => false,
+                'track_chat_open'     => false,
             ],
             MxChat_Plus_Tracking_Options::defaults()
         );
+    }
+
+    public function test_the_chat_opened_event_is_opt_in(): void {
+        // A new Matomo action, and one more interaction per visit: switching
+        // it on silently at upgrade would move every site's bounce rate.
+        $this->assertFalse(MxChat_Plus_Tracking_Options::defaults()['track_chat_open']);
     }
 
     public function test_matomo_is_on_and_ga4_off_out_of_the_box(): void {
@@ -86,7 +93,7 @@ final class TrackingOptionsTest extends TestCase {
         ];
     }
 
-    public function test_get_always_yields_exactly_the_five_keys(): void {
+    public function test_get_always_yields_exactly_the_six_keys(): void {
         update_option(MXCHAT_PLUS_TRACKING_OPTION_KEY, [
             'track_matomo' => false,
             // A key from an older build, or a hand-edited row: it must not
@@ -97,7 +104,7 @@ final class TrackingOptionsTest extends TestCase {
         $out = MxChat_Plus_Tracking_Options::get();
 
         $this->assertSame(
-            ['track_matomo', 'track_ga4', 'send_session_id', 'matomo_dimension_id', 'debug'],
+            ['track_matomo', 'track_ga4', 'send_session_id', 'matomo_dimension_id', 'debug', 'track_chat_open'],
             array_keys($out)
         );
         $this->assertArrayNotHasKey('track_piwik', $out);
@@ -116,6 +123,8 @@ final class TrackingOptionsTest extends TestCase {
 
         $this->assertTrue($out['send_session_id']);
         $this->assertSame(0, $out['matomo_dimension_id']);
+        // Every row saved before the setting existed reads it as off.
+        $this->assertFalse($out['track_chat_open']);
     }
 
     public function test_get_coerces_string_values_to_their_declared_types(): void {
@@ -126,6 +135,7 @@ final class TrackingOptionsTest extends TestCase {
             'send_session_id'     => '',
             'matomo_dimension_id' => '42',
             'debug'               => 'yes',
+            'track_chat_open'     => '1',
         ]);
 
         $out = MxChat_Plus_Tracking_Options::get();
@@ -135,6 +145,7 @@ final class TrackingOptionsTest extends TestCase {
         $this->assertFalse($out['send_session_id']);
         $this->assertSame(42, $out['matomo_dimension_id']);
         $this->assertTrue($out['debug']);
+        $this->assertTrue($out['track_chat_open']);
     }
 
     public function test_get_clamps_a_stored_dimension_that_is_out_of_range(): void {
@@ -152,15 +163,15 @@ final class TrackingOptionsTest extends TestCase {
         // input is present, because a checkbox posts nothing when off.
         $out = MxChat_Plus_Tracking_Options::sanitize(['matomo_dimension_id' => '0']);
 
-        foreach (['track_matomo', 'track_ga4', 'send_session_id', 'debug'] as $key) {
+        foreach (['track_matomo', 'track_ga4', 'send_session_id', 'debug', 'track_chat_open'] as $key) {
             $this->assertArrayHasKey($key, $out, "$key must be written as false, not left out");
             $this->assertFalse($out[$key]);
         }
     }
 
-    public function test_sanitize_always_returns_all_five_keys(): void {
+    public function test_sanitize_always_returns_all_six_keys(): void {
         $this->assertSame(
-            ['track_matomo', 'track_ga4', 'send_session_id', 'matomo_dimension_id', 'debug'],
+            ['track_matomo', 'track_ga4', 'send_session_id', 'matomo_dimension_id', 'debug', 'track_chat_open'],
             array_keys(MxChat_Plus_Tracking_Options::sanitize([]))
         );
     }
@@ -172,6 +183,7 @@ final class TrackingOptionsTest extends TestCase {
             'send_session_id'     => '1',
             'matomo_dimension_id' => '7',
             'debug'               => '1',
+            'track_chat_open'     => '1',
         ]);
 
         $this->assertSame(
@@ -181,6 +193,7 @@ final class TrackingOptionsTest extends TestCase {
                 'send_session_id'     => true,
                 'matomo_dimension_id' => 7,
                 'debug'               => true,
+                'track_chat_open'     => true,
             ],
             $out
         );
@@ -225,6 +238,7 @@ final class TrackingOptionsTest extends TestCase {
             'send_session_id'     => false,
             'matomo_dimension_id' => 0,
             'debug'               => false,
+            'track_chat_open'     => false,
         ];
 
         $this->assertSame($expected, MxChat_Plus_Tracking_Options::sanitize('corrupt'));
@@ -258,6 +272,7 @@ final class TrackingOptionsTest extends TestCase {
         $saved = MxChat_Plus_Tracking_Options::sanitize([
             'track_ga4'           => '1',
             'matomo_dimension_id' => '5',
+            'track_chat_open'     => '1',
         ]);
         update_option(MXCHAT_PLUS_TRACKING_OPTION_KEY, $saved);
 
@@ -380,8 +395,85 @@ final class TrackingOptionsTest extends TestCase {
                 'send_session_id'     => true,
                 'matomo_dimension_id' => 0,
                 'debug'               => true,
+                // The standalone plugin had no such event: it arrives off.
+                'track_chat_open'     => false,
             ],
             $this->stored()
         );
+    }
+
+    // ─── add_host_cache_purge_watch() ─────────────────────────────────────
+
+    /** What MxChat_Cache_Purge::watched_options() passes in (MxChat 3.2.25). */
+    private const HOST_WATCHED = ['mxchat_options', 'mxchat_theme_options', 'mxchat_prompts_options'];
+
+    public function test_cache_purge_watch_keeps_the_hosts_own_options_first(): void {
+        $out = MxChat_Plus_Tracking_Options::add_host_cache_purge_watch(self::HOST_WATCHED);
+
+        // Dropping one of these would stop the host purging for its own
+        // settings — a regression in MxChat caused by us.
+        $this->assertSame(self::HOST_WATCHED, array_slice($out, 0, 3));
+    }
+
+    public function test_cache_purge_watch_adds_the_options_printed_into_public_pages(): void {
+        $out = MxChat_Plus_Tracking_Options::add_host_cache_purge_watch(self::HOST_WATCHED);
+
+        // The localized settings, and the module switch that decides whether
+        // the <script> tag is there at all.
+        $this->assertContains(MXCHAT_PLUS_TRACKING_OPTION_KEY, $out);
+        $this->assertContains(MxChat_Plus_Modules::OPTION, $out);
+        $this->assertSame('mxchat_plus_tracking_options', MXCHAT_PLUS_TRACKING_OPTION_KEY);
+        $this->assertSame('mxchat_plus_modules', MxChat_Plus_Modules::OPTION);
+        $this->assertCount(5, $out);
+    }
+
+    public function test_cache_purge_watch_does_not_list_an_option_twice(): void {
+        // Another add-on, or a second registration of ours, already added it.
+        $out = MxChat_Plus_Tracking_Options::add_host_cache_purge_watch(
+            array_merge(self::HOST_WATCHED, [MXCHAT_PLUS_TRACKING_OPTION_KEY])
+        );
+
+        $this->assertIsArray($out);
+        $this->assertSame(array_values(array_unique($out)), $out);
+        $this->assertCount(5, $out);
+    }
+
+    public function test_cache_purge_watch_adds_ours_to_an_emptied_list(): void {
+        // An array is a valid list, even an empty one. The site owner's real
+        // opt-out is MxChat's own switch, which the host checks at purge time.
+        $this->assertSame(
+            [MXCHAT_PLUS_TRACKING_OPTION_KEY, MxChat_Plus_Modules::OPTION],
+            MxChat_Plus_Tracking_Options::add_host_cache_purge_watch([])
+        );
+    }
+
+    public function test_cache_purge_watch_leaves_other_entries_alone(): void {
+        // Not ours to clean: the host normalises the list itself.
+        $out = MxChat_Plus_Tracking_Options::add_host_cache_purge_watch(['mxchat_options', 42]);
+
+        $this->assertSame(
+            ['mxchat_options', 42, MXCHAT_PLUS_TRACKING_OPTION_KEY, MxChat_Plus_Modules::OPTION],
+            $out
+        );
+    }
+
+    /**
+     * @dataProvider brokenWatchLists
+     * @param mixed $input
+     */
+    public function test_cache_purge_watch_passes_a_broken_list_through_untouched($input): void {
+        // MxChat_Cache_Purge::watched_options() falls back to its own defaults
+        // for a non-array. Turning it into an array of ours would stop the
+        // host purging for its own settings.
+        $this->assertSame($input, MxChat_Plus_Tracking_Options::add_host_cache_purge_watch($input));
+    }
+
+    /** @return array<string,array{0:mixed}> */
+    public static function brokenWatchLists(): array {
+        return [
+            'null'   => [null],
+            'string' => ['mxchat_options'],
+            'false'  => [false],
+        ];
     }
 }

@@ -271,6 +271,27 @@ final class AdminAjaxTest extends TestCase {
         $this->assertSame(768, MxChat_Plus_DuckDB_Options::detect_embedding_dim());
     }
 
+    public function test_detect_dimension_probes_the_selected_model_and_keys_it_like_mxchat(): void {
+        // The stamp still names the previous model: the probe is for the one
+        // MxChat will embed with next, keyed on base URL + model.
+        $this->arm_valid_nonce();
+        update_option('mxchat_options', [
+            'custom_provider_for_embeddings'  => 'on',
+            'custom_provider_base_url'        => 'http://ollama.local:11434/v1',
+            'custom_provider_embedding_model' => 'bge-m3',
+        ]);
+        update_option('mxchat_active_embedding_model', 'text-embedding-3-small');
+        MxChat_Utils::$custom_embedding_returns = array_fill(0, 1024, 0.01);
+
+        $r = $this->captureAjaxResponse(fn() => $this->admin->ajax_detect_dimension());
+
+        $this->assertTrue($r['success']);
+        $this->assertSame('custom:bge-m3', $r['payload']['model']);
+        $probe = get_option(MxChat_Plus_DuckDB_Options::CUSTOM_DIM_OPTION);
+        $this->assertSame(md5('http://ollama.local:11434/v1|bge-m3'), $probe['key']);
+        $this->assertSame(1024, MxChat_Plus_DuckDB_Options::selected_embedding_dim());
+    }
+
     public function test_detect_dimension_surfaces_provider_error_string(): void {
         $this->arm_valid_nonce();
         update_option('mxchat_options', ['custom_provider_for_embeddings' => 'on']);

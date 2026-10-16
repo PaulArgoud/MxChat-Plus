@@ -5,8 +5,8 @@
  * printed — hence no wrapper and no page title here.
  *
  * @var array<string,mixed> $opts         plugin options
- * @var list<array{clicked_url:string,scope:string,clicks:int,sessions:int,last_click:string}> $rows
- * @var array{clicks:int,links:int,sessions:int} $totals
+ * @var list<array{url:string,clicks:int,sessions:int,scope:string,last_click:string}> $rows
+ * @var array{clicks:int,sessions:int,urls:int,internal:int,external:int} $totals
  * @var bool   $table_exists              wp_mxchat_url_clicks is present
  * @var string $export_url                admin-ajax.php
  * @var string $export_nonce
@@ -64,6 +64,29 @@ $datetime_format = (string) get_option('date_format') . ' ' . (string) get_optio
                         'Requires gtag() to be loaded by something else — a GA4 plugin, a tag manager, or the snippet in your theme. This module never injects the GA4 tag itself, and sends nothing when gtag() is absent.',
                         'mxchat-plus'
                     ); ?>
+                </p>
+            </td>
+        </tr>
+
+        <tr>
+            <th scope="row"><?php esc_html_e('Chat opened', 'mxchat-plus'); ?></th>
+            <td>
+                <label>
+                    <input type="checkbox" name="<?php echo esc_attr($key); ?>[track_chat_open]" value="1"
+                        <?php checked(!empty($opts['track_chat_open'])); ?>>
+                    <?php esc_html_e('Also send an event when a visitor opens the chat window', 'mxchat-plus'); ?>
+                </label>
+                <p class="description" style="max-width:720px;">
+                    <?php
+                    // The two event names are analytics row keys, not UI
+                    // text: they are passed in untranslated.
+                    printf(
+                        /* translators: 1: Matomo event action, keep as is; 2: GA4 event name, keep as is */
+                        esc_html__('Off by default. Adds the Matomo action %1$s and the GA4 event %2$s, at most once per chatbot per page load. A chatbot embedded in the page is never reported: it is on screen from the start, so nobody opened it. A floating window counts however it was revealed, including by another plugin or a theme button. Needs MxChat 3.2.22 or later; older versions send nothing.', 'mxchat-plus'),
+                        '<code>Ouverture chat</code>',
+                        '<code>mxchat_chat_open</code>'
+                    );
+                    ?>
                 </p>
             </td>
         </tr>
@@ -132,7 +155,7 @@ $datetime_format = (string) get_option('date_format') . ' ' . (string) get_optio
 
     <p style="max-width:720px;">
         <?php esc_html_e(
-            'MxChat logs link clicks server-side into its own table, which it creates when the plugin is activated. That table does not exist on this site, so no click has ever been recorded and there is nothing to report. It appears the next time MxChat is activated.',
+            'MxChat logs link clicks server-side into its own table, which it creates when the plugin is activated and again after each MxChat update. That table does not exist on this site, so there is nothing to report. Deactivating and reactivating MxChat creates it now.',
             'mxchat-plus'
         ); ?>
     </p>
@@ -142,6 +165,13 @@ $datetime_format = (string) get_option('date_format') . ' ' . (string) get_optio
     <p class="description" style="max-width:720px;">
         <?php esc_html_e(
             'This report counts what MxChat itself records server-side, which is a narrower population than the events sent above: MxChat only tracks absolute http(s) links inside answers — never relative links, and never suggested questions. The two figures measure different things and will not match, by construction.',
+            'mxchat-plus'
+        ); ?>
+    </p>
+
+    <p class="description" style="max-width:720px;">
+        <?php esc_html_e(
+            'Counts are not comparable across the MxChat 3.2.24 and 3.2.25 updates, in either direction: MxChat changed which clicks it logs and which addresses it turns into links, so one page can also appear under two spellings. Compare the Sessions column rather than Clicks across those dates.',
             'mxchat-plus'
         ); ?>
     </p>
@@ -158,7 +188,7 @@ $datetime_format = (string) get_option('date_format') . ' ' . (string) get_optio
                 /* translators: 1: number of clicks, 2: number of distinct links, 3: number of distinct sessions */
                 esc_html__('%1$s clicks recorded, on %2$s links, across %3$s sessions.', 'mxchat-plus'),
                 esc_html(number_format_i18n((int) ($totals['clicks'] ?? 0))),
-                esc_html(number_format_i18n((int) ($totals['links'] ?? 0))),
+                esc_html(number_format_i18n((int) ($totals['urls'] ?? 0))),
                 esc_html(number_format_i18n((int) ($totals['sessions'] ?? 0)))
             );
 
@@ -187,7 +217,7 @@ $datetime_format = (string) get_option('date_format') . ' ' . (string) get_optio
             <tbody>
             <?php foreach ($rows as $row) : ?>
                 <?php
-                $url   = (string) ($row['clicked_url'] ?? '');
+                $url   = (string) ($row['url'] ?? '');
                 $scope = (string) ($row['scope'] ?? '');
                 $last  = (string) ($row['last_click'] ?? '');
                 $stamp = $last !== '' ? strtotime($last . ' UTC') : false;

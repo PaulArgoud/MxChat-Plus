@@ -2,16 +2,26 @@
 /**
  * Compactor: nightly job that prunes orphan vectors.
  *
- * A vector is orphan when:
- *   - its source_url no longer maps to any row in wp_mxchat_system_prompt_content
- *     (post deleted in WP, mxchat row removed, cascade-delete missed for any reason);
- *   OR
- *   - its bot_id no longer matches any known bot (kept best-effort, optional).
+ * A vector is orphan when its id no longer maps to any row in
+ * wp_mxchat_system_prompt_content (post deleted in WP, mxchat row removed,
+ * cascade-delete missed for any reason). That test only means something for
+ * bots whose DuckDB rows the MySQL sync wrote. Bots the host writes through
+ * the Pinecone proxy have NO MySQL rows at all — in Pinecone mode MxChat
+ * stores straight to the vector store (MxChat_Utils::submit_content_to_db()
+ * → store_in_pinecone_only(), MxChat 3.2.25) — so every one of their vectors
+ * would look orphaned. Those bots are never pruned (protected_bots()); the
+ * host deletes their vectors itself through /vectors/delete.
  *
- * The compactor is conservative: it never runs if last sync was within the past
- * hour (the sync may be mid-transit), and it caps the per-run delete count
- * (filter `mxchat_plus_duckdb_compactor_max_deletes`, default 5000) to avoid blowing
- * up MotherDuck billing on a misconfigured install.
+ * The compactor is conservative:
+ *   - it never runs before a first MySQL sync (last_sync_at = 0) nor within
+ *     an hour of the last one (the sync may be mid-transit);
+ *   - it refuses (and records last_error) when the alive set is empty while
+ *     prunable rows exist, or when the orphans exceed a fraction of the rows
+ *     scanned (filter `mxchat_plus_duckdb_compactor_max_orphan_ratio`,
+ *     default 0.5) — `wp mxchat-plus duckdb compact --force` overrides both;
+ *   - it caps the per-run delete count (filter
+ *     `mxchat_plus_duckdb_compactor_max_deletes`, default 5000) to avoid
+ *     blowing up MotherDuck billing on a misconfigured install.
  */
 
 if (!defined('ABSPATH')) {
@@ -23,6 +33,30 @@ class MxChat_Plus_DuckDB_Compactor {
     private static ?self $instance = null;
     const CRON_HOOK = 'mxchat_plus_duckdb_compact';
     const MIN_SYNC_AGE_SECONDS = 3600;
+
+    /**
+     * Durable record of the bots the host has written through the Pinecone
+     * proxy: {bots: {bot_id: first_seen_unix}, seeded_at: unix}. Written by
+     * note_proxy_write() (once per bot, ever) and seeded once for installs
+     * that wrote through the proxy before this record existed. Never pruned.
+     */
+    const PROXY_WRITTEN_OPTION = 'mxchat_plus_duckdb_proxy_written_bots';
+
+    /** Default of `mxchat_plus_duckdb_compactor_max_orphan_ratio`. */
+    const DEFAULT_MAX_ORPHAN_RATIO = 0.5;
+
+    /** Below this many orphans the ratio safety valve does not apply. */
+    const RATIO_MIN_ORPHANS = 10;
+
+    /**
+     * Host literal: the content type MxChat's media auto-sync indexes
+     * attachments under (submit_content_to_db(…, 'default', 'attachment'),
+     * MxChat 3.2.25) — the only entries its attachment signature vouches for.
+     */
+    const ATTACHMENT_CONTENT_TYPE = 'attachment';
+
+    /** @var array<string, true> per-request memo of note_proxy_write() */
+    private static array $noted = [];
 
     public static function instance(): self {
         return self::$instance ??= new self();
@@ -60,7 +94,12 @@ class MxChat_Plus_DuckDB_Compactor {
         return $first > time() ? $first : $first + DAY_IN_SECONDS;
     }
 
-    public function run(): array {
+    /**
+     * @param bool $force bypass the two safety valves (empty alive set,
+     *                    orphan ratio) — never the protected bots nor the
+     *                    sync-freshness guards. Used by `compact --force`.
+     */
+    public function run(bool $force = false): array {
         $opts = MxChat_Plus_DuckDB_Options::get();
         if (empty($opts['enabled'])) {
             return ['ok' => false, 'reason' => 'plugin disabled', 'deleted' => 0, 'cache_swept' => 0];
@@ -75,7 +114,13 @@ class MxChat_Plus_DuckDB_Compactor {
         // DuckDB backend.
         $cache_swept = $this->sweep_stale_query_cache();
 
-        if (!empty($opts['last_sync_at']) && (time() - (int) $opts['last_sync_at']) < self::MIN_SYNC_AGE_SECONDS) {
+        // No MySQL sync has ever completed: the alive set would be empty and
+        // every vector an "orphan". (This used to skip the freshness guard
+        // entirely, so the first hour after enabling was the riskiest one.)
+        if (empty($opts['last_sync_at'])) {
+            return ['ok' => false, 'reason' => 'never synced', 'deleted' => 0, 'cache_swept' => $cache_swept];
+        }
+        if ((time() - (int) $opts['last_sync_at']) < self::MIN_SYNC_AGE_SECONDS) {
             return ['ok' => false, 'reason' => 'last sync too recent', 'deleted' => 0, 'cache_swept' => $cache_swept];
         }
 
@@ -83,7 +128,7 @@ class MxChat_Plus_DuckDB_Compactor {
         $deleted = 0;
 
         try {
-            $deleted = $this->prune_orphans($max);
+            $deleted = $this->prune_orphans($max, $force);
             MxChat_Plus_DuckDB_Options::update([
                 'last_compact_at' => time(),
                 'last_error'      => '',
@@ -173,48 +218,74 @@ class MxChat_Plus_DuckDB_Compactor {
 
     const KB_PAGE_SIZE = 5000;
 
+    /** Rows per keyset page of the DuckDB scan. */
+    const SCAN_PAGE_SIZE = 1000;
+
     /**
      * Strategy: build a set of "alive" vector_ids by paging through the MySQL
      * KB (avoids one ~20 MB allocation for big KBs — PHP can free each batch's
      * row objects as we move on, keeping only the much smaller id-only map
-     * around). Then page through DuckDB and delete everything that isn't in
-     * that set. DELETE is chunked to 100 IDs at a time to stay under
+     * around). Then scan the DuckDB rows of the prunable bots (keyset on
+     * (vector_id, bot_id)), collect the orphans, run the safety valves, and
+     * only then delete — per bot, chunked to 100 ids to stay under
      * MotherDuck HTTP body limits.
+     *
+     * @throws RuntimeException when a safety valve refuses the run.
      */
-    private function prune_orphans(int $max_deletes): int {
-        if (!self::orphan_pruning_allowed()) {
+    private function prune_orphans(int $max_deletes, bool $force = false): int {
+        if ($max_deletes <= 0 || !self::orphan_pruning_allowed()) {
             return 0;
+        }
+
+        $store = new MxChat_Plus_DuckDB_Vector_Store();
+        $store->ensure_schema();
+        $conn  = $store->connection();
+        $table = $store->table_name_quoted();
+
+        self::maybe_seed_proxy_written_bots($store);
+        $protected = self::protected_bots();
+        // With the Multi-Bot add-on, a non-default bot may read and write
+        // through the proxy (inject_pinecone_config answers
+        // mxchat_get_bot_pinecone_config for the bots opted in under
+        // Multi-Bot routing, and installs from before that setting routed
+        // every bot), so only the default bot is ever pruned: leaving a
+        // non-default bot's orphans alone is the conservative side.
+        $default_only = class_exists('MxChat_Multi_Bot_Manager');
+        if ($default_only && in_array('default', $protected, true)) {
+            return 0;
+        }
+
+        $scope = [];
+        if ($protected !== []) {
+            $scope[] = sprintf('bot_id NOT IN (%s)', implode(',', array_map([self::class, 'sql_literal'], $protected)));
+        }
+        if ($default_only) {
+            $scope[] = "bot_id = 'default'";
         }
 
         $alive = $this->load_alive_ids();
 
-        $store = new MxChat_Plus_DuckDB_Vector_Store();
-        $store->ensure_schema();
-        $conn = $store->connection();
-        $table = $store->table_name_quoted();
-
-        $deleted   = 0;
-        $page_size = 1000;
-        $orphans   = [];
-        // Keyset (seek) cursor, NOT an OFFSET. The scan deletes from the very
-        // table it is paging through, and with OFFSET every delete shifts the
-        // remaining rows left while the offset keeps advancing by page_size —
-        // so up to one page of rows was skipped after each drain and a single
-        // sweep could never compact everything. A cursor on the ordering
-        // column is immune: it resumes from the last vector_id actually seen.
-        $cursor = null;
-
-        while ($deleted < $max_deletes) {
-            $page = $conn->execute(
-                $cursor === null
-                    ? sprintf('SELECT vector_id FROM %s ORDER BY vector_id LIMIT %d', $table, $page_size)
-                    : sprintf(
-                        "SELECT vector_id FROM %s WHERE vector_id > '%s' ORDER BY vector_id LIMIT %d",
-                        $table,
-                        str_replace("'", "''", $cursor),
-                        $page_size
-                    )
-            );
+        // Keyset (seek) cursor on (vector_id, bot_id), NOT an OFFSET, and
+        // NOT vector_id alone: the same md5(url) id exists once per bot
+        // (schema v4), so a cursor on vector_id would skip the other bots'
+        // copy at a page boundary.
+        $orphans  = [];   // list of [bot, id, source_url, content_type]
+        $scanned  = 0;
+        $orphan_total = 0;
+        $cursor_id  = null;
+        $cursor_bot = '';
+        while (true) {
+            $where = $scope;
+            if ($cursor_id !== null) {
+                $id_lit = self::sql_literal($cursor_id);
+                $where[] = sprintf('(vector_id > %1$s OR (vector_id = %1$s AND bot_id > %2$s))', $id_lit, self::sql_literal($cursor_bot));
+            }
+            $page = $conn->execute(sprintf(
+                'SELECT vector_id, bot_id, source_url, content_type FROM %s%s ORDER BY vector_id, bot_id LIMIT %d',
+                $table,
+                $where === [] ? '' : ' WHERE ' . implode(' AND ', $where),
+                self::SCAN_PAGE_SIZE
+            ));
             if (empty($page)) {
                 break;
             }
@@ -224,50 +295,73 @@ class MxChat_Plus_DuckDB_Compactor {
                 if ($id === '') {
                     continue;
                 }
-                $cursor = $id;
+                $bot = (string) ($row['bot_id'] ?? '');
+                $bot = $bot !== '' ? $bot : 'default';
+                $cursor_id  = $id;
+                $cursor_bot = $bot;
+                if (in_array($bot, $protected, true) || ($default_only && $bot !== 'default')) {
+                    continue; // belt and braces: never prune a protected bot
+                }
+                $scanned++;
                 if (!isset($alive[$id])) {
-                    $orphans[] = $id;
+                    $orphan_total++;
+                    if (count($orphans) < $max_deletes) {
+                        $orphans[] = [$bot, $id, (string) ($row['source_url'] ?? ''), (string) ($row['content_type'] ?? '')];
+                    }
                 }
             }
 
-            // Drain the buffer in chunks to avoid massive IN(…) lists.
-            while (count($orphans) >= self::DELETE_CHUNK_SIZE && $deleted < $max_deletes) {
-                $deleted += $this->flush_orphans($conn, $table, $orphans, $max_deletes - $deleted);
-            }
-
-            if (count($page) < $page_size) {
+            if (count($page) < self::SCAN_PAGE_SIZE) {
                 break; // short page → end of table
             }
         }
 
-        // Final flush.
-        while (!empty($orphans) && $deleted < $max_deletes) {
-            $deleted += $this->flush_orphans($conn, $table, $orphans, $max_deletes - $deleted);
+        if (!$force) {
+            $this->assert_safe_to_prune($alive, $scanned, $orphan_total);
+        }
+
+        // Delete per bot, at most DELETE_CHUNK_SIZE ids per statement. The
+        // collection loop above already bounded $orphans at $max_deletes.
+        $by_bot = [];
+        foreach ($orphans as $o) {
+            $by_bot[$o[0]][] = $o;
+        }
+        $deleted = 0;
+        foreach ($by_bot as $bot => $rows) {
+            foreach (array_chunk($rows, self::DELETE_CHUNK_SIZE) as $chunk) {
+                $deleted += $this->delete_chunk($conn, $table, (string) $bot, array_map(fn($o) => (string) $o[1], $chunk));
+                $this->forget_attachment_signatures((string) $bot, $chunk);
+            }
+            // The rows are gone: cached top-Ks of this bot must stop serving them.
+            MxChat_Plus_DuckDB_Cache::flush_query_cache((string) $bot);
         }
 
         return $deleted;
     }
 
     /**
-     * Delete at most $budget ids from the head of $orphans.
+     * Safety valves. Throw (the caller records last_error) instead of
+     * deleting when the alive set looks wrong.
      *
-     * The budget is what keeps `max_deletes` an actual ceiling: draining fixed
-     * 100-id chunks while only testing `$deleted < $max_deletes` beforehand
-     * overshot the advertised cap by up to 99 rows on the final chunk.
-     *
-     * @param list<string> $orphans consumed in place
+     * @param array<string, true> $alive
      */
-    private function flush_orphans(
-        MxChat_Plus_DuckDB_Connection $conn,
-        string $table,
-        array &$orphans,
-        int $budget
-    ): int {
-        $size = min(self::DELETE_CHUNK_SIZE, $budget, count($orphans));
-        if ($size <= 0) {
-            return 0;
+    private function assert_safe_to_prune(array $alive, int $scanned, int $orphan_total): void {
+        if ($scanned > 0 && $alive === []) {
+            throw new RuntimeException(sprintf(
+                'refused to prune: the MySQL knowledge base is empty while %d vectors would be deleted. Run `wp mxchat-plus duckdb compact --force` if that is intended.',
+                $orphan_total
+            ));
         }
-        return $this->delete_chunk($conn, $table, array_splice($orphans, 0, $size));
+        $ratio = (float) apply_filters('mxchat_plus_duckdb_compactor_max_orphan_ratio', self::DEFAULT_MAX_ORPHAN_RATIO);
+        if ($scanned > 0 && $orphan_total > self::RATIO_MIN_ORPHANS && $ratio < 1.0
+            && ($orphan_total / $scanned) > max(0.0, $ratio)) {
+            throw new RuntimeException(sprintf(
+                'refused to prune: %d of %d scanned vectors look orphaned (more than %d%%). Run `wp mxchat-plus duckdb compact --force` if that is intended.',
+                $orphan_total,
+                $scanned,
+                (int) round(max(0.0, $ratio) * 100)
+            ));
+        }
     }
 
     /**
@@ -283,6 +377,9 @@ class MxChat_Plus_DuckDB_Compactor {
      *
      * Sites that know their imported ids do match can re-enable pruning:
      *   add_filter('mxchat_plus_duckdb_compactor_prune_orphans', '__return_true');
+     *
+     * Bots written through the proxy are excluded separately, whatever this
+     * returns (protected_bots()).
      */
     public static function orphan_pruning_allowed(): bool {
         $imported = get_option(MxChat_Plus_DuckDB_Pinecone_Migrator::IMPORTED_MARKER_OPTION, null);
@@ -291,14 +388,183 @@ class MxChat_Plus_DuckDB_Compactor {
         return (bool) apply_filters('mxchat_plus_duckdb_compactor_prune_orphans', $allowed, $imported);
     }
 
-    private function delete_chunk(MxChat_Plus_DuckDB_Connection $conn, string $quoted_table, array $ids): int {
-        $list = implode(',', array_map(fn($id) => "'" . str_replace("'", "''", $id) . "'", $ids));
+    // ─── Proxy-written bots ─────────────────────────────────────────────
+
+    /**
+     * Record that the host wrote $bot_id's vectors through the Pinecone
+     * proxy, so the compactor never treats them as orphans. Cheap on the hot
+     * path: one per-request memo check, one option read the first time per
+     * request, and an option write only the first time ever for a bot.
+     * Called by the REST proxy's /vectors/upsert handler after a successful
+     * write.
+     */
+    public static function note_proxy_write(string $bot_id): void {
+        $bot_id = $bot_id !== '' ? $bot_id : 'default';
+        if (isset(self::$noted[$bot_id])) {
+            return;
+        }
+        self::$noted[$bot_id] = true;
+        $state = self::proxy_written_state();
+        if (isset($state['bots'][$bot_id])) {
+            return;
+        }
+        $state['bots'][$bot_id] = time();
+        update_option(self::PROXY_WRITTEN_OPTION, $state, false);
+    }
+
+    /**
+     * Bots recorded as proxy-written (durable), ascending.
+     *
+     * @return list<string>
+     */
+    public static function proxy_written_bots(): array {
+        $bots = array_map('strval', array_keys(self::proxy_written_state()['bots']));
+        sort($bots);
+        return $bots;
+    }
+
+    /**
+     * Every bot the sweep must leave alone: the recorded proxy-written bots,
+     * plus 'default' while the default-bot takeover is on (its writes go
+     * through the proxy whether or not one has been recorded yet).
+     *
+     * @return list<string>
+     */
+    public static function protected_bots(): array {
+        $bots = self::proxy_written_bots();
+        $opts = MxChat_Plus_DuckDB_Options::get();
+        if (!empty($opts['takeover_default_bot_pinecone']) && !in_array('default', $bots, true)) {
+            $bots[] = 'default';
+        }
+        sort($bots);
+        return $bots;
+    }
+
+    /**
+     * One-time seed for installs that wrote through the proxy before
+     * note_proxy_write() existed: 'default' when the takeover is on, and
+     * every non-default bot already in the store. Before opt-in Multi-Bot
+     * routing, inject_pinecone_config answered mxchat_get_bot_pinecone_config
+     * for every non-default bot, so the host wrote those bots through the
+     * proxy and their vectors have no MySQL row to be "alive" against; a
+     * missed cleanup is cheap, a deleted knowledge base is not.
+     */
+    private static function maybe_seed_proxy_written_bots(MxChat_Plus_DuckDB_Vector_Store $store): void {
+        $state = self::proxy_written_state();
+        if (!empty($state['seeded_at'])) {
+            return;
+        }
+        $now  = time();
+        $opts = MxChat_Plus_DuckDB_Options::get();
+        if (!empty($opts['takeover_default_bot_pinecone']) && !isset($state['bots']['default'])) {
+            $state['bots']['default'] = $now;
+        }
+        try {
+            foreach ($store->list_bot_ids(1000) as $bot) {
+                if ($bot !== 'default' && !isset($state['bots'][$bot])) {
+                    $state['bots'][$bot] = $now;
+                }
+            }
+        } catch (\Throwable $e) {
+            // Unreadable store: do not record the seed, retry next run.
+            throw new RuntimeException('could not list the bots in the vector store before pruning: ' . $e->getMessage(), 0, $e);
+        }
+        $state['seeded_at'] = $now;
+        update_option(self::PROXY_WRITTEN_OPTION, $state, false);
+    }
+
+    /**
+     * @return array{bots: array<string, int>, seeded_at: int}
+     */
+    private static function proxy_written_state(): array {
+        $raw = get_option(self::PROXY_WRITTEN_OPTION, []);
+        $bots = [];
+        if (is_array($raw) && isset($raw['bots']) && is_array($raw['bots'])) {
+            foreach ($raw['bots'] as $bot => $ts) {
+                if ((string) $bot !== '') $bots[(string) $bot] = (int) $ts;
+            }
+        }
+        return [
+            'bots'      => $bots,
+            'seeded_at' => is_array($raw) ? (int) ($raw['seeded_at'] ?? 0) : 0,
+        ];
+    }
+
+    /** Test hook: drop the per-request note_proxy_write() memo. */
+    public static function reset_noted_cache(): void {
+        self::$noted = [];
+    }
+
+    // ─── Delete + side effects ──────────────────────────────────────────
+
+    /**
+     * @param list<string> $ids
+     */
+    private function delete_chunk(MxChat_Plus_DuckDB_Connection $conn, string $quoted_table, string $bot_id, array $ids): int {
+        if ($ids === []) {
+            return 0;
+        }
         $conn->execute(sprintf(
-            'DELETE FROM %s WHERE vector_id IN (%s)',
+            'DELETE FROM %s WHERE bot_id = %s AND vector_id IN (%s)',
             $quoted_table,
-            $list
+            self::sql_literal($bot_id),
+            implode(',', array_map([self::class, 'sql_literal'], $ids))
         ));
         return count($ids);
+    }
+
+    /**
+     * MxChat 3.2.22+ skips re-embedding an attachment whose signature
+     * (`_mxchat_kb_attachment_sig`) is unchanged, and clears that signature
+     * itself whenever IT deletes the entry (delete_chunks_for_url() →
+     * forget_attachment_signature(), MxChat 3.2.24). A deletion it did not
+     * make must clear it too, or the file is never re-indexed. Skipped when
+     * the default bot's real store is an external Pinecone index (takeover
+     * off): our copy was not authoritative there, and the signature still
+     * vouches for the real entry.
+     *
+     * @param list<array{0: string, 1: string, 2: string, 3: string}> $rows
+     */
+    private function forget_attachment_signatures(string $bot_id, array $rows): void {
+        if (!is_callable(['MxChat_Utils', 'forget_attachment_signature'])) {
+            return; // host older than 3.2.24
+        }
+        if ($bot_id === 'default' && self::default_bot_on_external_pinecone()) {
+            return;
+        }
+        $seen = [];
+        foreach ($rows as $o) {
+            $url = $o[2];
+            if ($o[3] !== self::ATTACHMENT_CONTENT_TYPE || $url === '' || isset($seen[$url])) {
+                continue;
+            }
+            $seen[$url] = true;
+            try {
+                MxChat_Utils::forget_attachment_signature($url, $bot_id);
+            } catch (\Throwable $e) {
+                error_log('[mxchat-plus] compactor: could not clear the attachment signature of ' . $url . ': ' . $e->getMessage());
+            }
+        }
+    }
+
+    /**
+     * Host literal: mxchat_pinecone_addon_options / mxchat_use_pinecone. With
+     * the takeover off nothing of ours filters that option, so it reflects
+     * the site's real Pinecone settings.
+     */
+    private static function default_bot_on_external_pinecone(): bool {
+        $opts = MxChat_Plus_DuckDB_Options::get();
+        if (!empty($opts['takeover_default_bot_pinecone'])) {
+            return false;
+        }
+        $pc = get_option('mxchat_pinecone_addon_options', []);
+        return is_array($pc)
+            && (string) ($pc['mxchat_use_pinecone'] ?? '') === '1'
+            && !empty($pc['mxchat_pinecone_api_key']);
+    }
+
+    private static function sql_literal(string $value): string {
+        return "'" . str_replace("'", "''", $value) . "'";
     }
 
     /**

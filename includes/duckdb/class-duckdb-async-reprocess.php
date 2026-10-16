@@ -5,7 +5,8 @@
  * Why Action Scheduler:
  *   - The synchronous AJAX-batched path in MxChat_Plus_DuckDB_Sync::reprocess_posts()
  *     dies on PHP `max_execution_time` for catalogs with thousands of posts
- *     and chunky `the_content` filter chains (ACF, page builders).
+ *     (one embedding call per chunk, plus MxChat's content assembly: ACF,
+ *     WooCommerce, synced patterns).
  *   - Action Scheduler is bundled with WooCommerce and used by dozens of
  *     popular plugins; it's the de-facto background queue on WP.
  *   - We don't hard-depend on it: when AS isn't loaded the admin UI shows a
@@ -52,13 +53,22 @@ class MxChat_Plus_DuckDB_Async_Reprocess {
      * Enqueue every published post of the requested types into Action Scheduler.
      * Returns the number of jobs scheduled.
      *
-     * @throws RuntimeException when Action Scheduler isn't loaded.
+     * @throws RuntimeException when Action Scheduler isn't loaded, or when
+     *         MxChat cannot embed for this bot (its own preflight reason).
      */
     public function enqueue_batch(array $post_types, string $bot_id = 'default'): array {
         if (!self::is_available()) {
             throw new RuntimeException(
                 __('Action Scheduler is not active. Install/activate WooCommerce or the standalone Action Scheduler plugin, or use the synchronous reprocess instead.', 'mxchat-plus')
             );
+        }
+
+        // Refuse the whole batch once, up front, the way MxChat's own
+        // importers do (MxChat_Utils::embedding_preflight(), MxChat 3.2.21+;
+        // a fallback covers older hosts), rather than queueing one job per
+        // post that would each fail on the same missing key or Base URL.
+        if (class_exists('MxChat_Utils')) {
+            MxChat_Plus_DuckDB_Post_Reprocessor::embedding_api_key($bot_id);
         }
 
         $q = new WP_Query([

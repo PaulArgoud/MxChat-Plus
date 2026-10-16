@@ -12,6 +12,11 @@ use PHPUnit\Framework\TestCase;
  * stops working) or — worse — lets cross-namespace access leak (one bot
  * reads another bot's vectors). Constant-time comparison and per-namespace
  * isolation are the load-bearing properties; we test both.
+ *
+ * Also locked here: check_token_any_namespace (describe_index_stats, whose
+ * body MxChat sends as '{}'), and the loopback signature that exempts
+ * MxChat's own calls from the external rate limit — bound to the method,
+ * the path, the minute and the token, never a way around the token check.
  */
 final class ProxyAuthTest extends TestCase {
 
@@ -20,7 +25,12 @@ final class ProxyAuthTest extends TestCase {
     protected function setUp(): void {
         $GLOBALS['__test_options']    = [];
         $GLOBALS['__test_transients'] = [];
+        $GLOBALS['__test_filter_overrides'] = [];
         $this->proxy = MxChat_Plus_DuckDB_Pinecone_Proxy::instance();
+    }
+
+    protected function tearDown(): void {
+        $GLOBALS['__test_filter_overrides'] = [];
     }
 
     private function makeRequest(?string $api_key, string $namespace = ''): WP_REST_Request {
@@ -128,6 +138,135 @@ final class ProxyAuthTest extends TestCase {
         $this->assertTrue($this->proxy->check_token($req));
     }
 
+    // ─── Routes without a namespace (describe_index_stats) ────────────────
+
+    public function test_any_namespace_check_accepts_a_bot_token_whatever_the_body_says(): void {
+        // MxChat posts '{}' to describe_index_stats, which namespace_from_request()
+        // reads as 'default': the per-namespace check would answer 401 to
+        // every Multi-Bot bot, and the host would show a count of 0.
+        update_option(MxChat_Plus_DuckDB_Pinecone_Proxy::PROXY_TOKEN_MAP_OPTION, ['sales' => 'tok_sales']);
+        $req = $this->makeRequest('tok_sales');
+        $req->set_json_params([]);
+
+        $this->assertFalse($this->proxy->check_token($req), 'the namespaced check still refuses it');
+        $this->assertTrue($this->proxy->check_token_any_namespace($req));
+        $this->assertSame('sales', $req->get_param(MxChat_Plus_DuckDB_Pinecone_Proxy::AUTH_NS_PARAM),
+            'the handler scopes its answer to the token');
+    }
+
+    public function test_any_namespace_check_still_requires_a_valid_token(): void {
+        update_option(MxChat_Plus_DuckDB_Pinecone_Proxy::PROXY_TOKEN_OPTION, 'global-token');
+        $this->assertFalse($this->proxy->check_token_any_namespace($this->makeRequest('nope')));
+        $this->assertFalse($this->proxy->check_token_any_namespace($this->makeRequest(null)));
+
+        $legacy = $this->makeRequest('global-token');
+        $this->assertTrue($this->proxy->check_token_any_namespace($legacy));
+        $this->assertSame('*', $legacy->get_param(MxChat_Plus_DuckDB_Pinecone_Proxy::AUTH_NS_PARAM));
+    }
+
+    public function test_namespace_zero_is_a_namespace_not_the_default(): void {
+        update_option(MxChat_Plus_DuckDB_Pinecone_Proxy::PROXY_TOKEN_MAP_OPTION, ['0' => 'tok_zero']);
+        $this->assertTrue($this->proxy->check_token($this->makeRequest('tok_zero', '0')));
+    }
+
+    // ─── MxChat's own loopback calls ──────────────────────────────────────
+
+    private function loopbackRequest(string $token, string $method, string $path, ?string $signature, string $namespace = 'default'): WP_REST_Request {
+        $req = new WP_REST_Request();
+        $req->set_header('api-key', $token);
+        $req->set_method($method);
+        $req->set_route('/mxchat-plus/v1/pinecone-proxy' . $path);
+        if ($method === 'GET') {
+            $req->set_query_params(['namespace' => $namespace]);
+        } else {
+            $req->set_json_params(['namespace' => $namespace]);
+        }
+        if ($signature !== null) {
+            $req->set_header(MxChat_Plus_DuckDB_Pinecone_Proxy::INTERNAL_HEADER, $signature);
+        }
+        return $req;
+    }
+
+    private static function sign(string $method, string $path, string $token, int $minutes_ago = 0): string {
+        return MxChat_Plus_DuckDB_Pinecone_Proxy::loopback_signature(
+            $method, $path, MxChat_Plus_DuckDB_Pinecone_Proxy::loopback_window() - $minutes_ago, $token
+        );
+    }
+
+    public function test_signed_loopback_bulk_calls_are_not_rate_limited(): void {
+        // REST DELETE /knowledge with 50 URLs makes ~150 list/delete calls in
+        // seconds; a 429 there reports entries as not deleted and leaves chunks.
+        update_option(MxChat_Plus_DuckDB_Pinecone_Proxy::PROXY_TOKEN_MAP_OPTION, ['default' => 'tok']);
+        $GLOBALS['__test_filter_overrides']['mxchat_plus_duckdb_proxy_rate_limit_per_minute'] = 2;
+
+        for ($i = 0; $i < 5; $i++) {
+            $this->assertTrue($this->proxy->check_token(
+                $this->loopbackRequest('tok', 'GET', '/vectors/list', self::sign('GET', '/vectors/list', 'tok'))
+            ), "signed call $i");
+        }
+        // …and they did not draw on the bucket external callers (and chat) share.
+        $this->assertTrue($this->proxy->check_token($this->loopbackRequest('tok', 'GET', '/vectors/list', null)));
+        $this->assertTrue($this->proxy->check_token($this->loopbackRequest('tok', 'GET', '/vectors/list', null)));
+        $this->assertInstanceOf(WP_Error::class, $this->proxy->check_token($this->loopbackRequest('tok', 'GET', '/vectors/list', null)),
+            'external callers keep the limit');
+    }
+
+    public function test_signed_loopback_queries_keep_a_bucket_of_their_own(): void {
+        update_option(MxChat_Plus_DuckDB_Pinecone_Proxy::PROXY_TOKEN_MAP_OPTION, ['default' => 'tok']);
+        $GLOBALS['__test_filter_overrides']['mxchat_plus_duckdb_proxy_internal_rate_limit_per_minute'] = 2;
+        $GLOBALS['__test_filter_overrides']['mxchat_plus_duckdb_proxy_rate_limit_per_minute'] = 1;
+
+        $q = fn() => $this->loopbackRequest('tok', 'POST', '/query', self::sign('POST', '/query', 'tok'));
+        $this->assertTrue($this->proxy->check_token($q()));
+        $this->assertTrue($this->proxy->check_token($q()));
+        $res = $this->proxy->check_token($q());
+        $this->assertInstanceOf(WP_Error::class, $res, '/query keeps a CPU guard even for the host');
+        $this->assertSame(429, $res->get_error_data()['status'] ?? null);
+
+        // The external bucket is untouched by those three calls.
+        $this->assertTrue($this->proxy->check_token($this->loopbackRequest('tok', 'POST', '/query', null)));
+    }
+
+    public function test_previous_minute_signature_is_accepted_older_ones_are_not(): void {
+        update_option(MxChat_Plus_DuckDB_Pinecone_Proxy::PROXY_TOKEN_MAP_OPTION, ['default' => 'tok']);
+        $GLOBALS['__test_filter_overrides']['mxchat_plus_duckdb_proxy_rate_limit_per_minute'] = 1;
+
+        // Burn the external bucket, so only a valid signature can pass.
+        $this->assertTrue($this->proxy->check_token($this->loopbackRequest('tok', 'GET', '/vectors/list', null)));
+
+        $this->assertTrue($this->proxy->check_token(
+            $this->loopbackRequest('tok', 'GET', '/vectors/list', self::sign('GET', '/vectors/list', 'tok', 1))
+        ), 'a call signed just before the minute turned');
+        $this->assertInstanceOf(WP_Error::class, $this->proxy->check_token(
+            $this->loopbackRequest('tok', 'GET', '/vectors/list', self::sign('GET', '/vectors/list', 'tok', 2))
+        ));
+    }
+
+    public function test_a_signature_is_bound_to_method_path_and_token(): void {
+        update_option(MxChat_Plus_DuckDB_Pinecone_Proxy::PROXY_TOKEN_MAP_OPTION, ['default' => 'tok', 'sales' => 'tok_sales']);
+        $GLOBALS['__test_filter_overrides']['mxchat_plus_duckdb_proxy_rate_limit_per_minute'] = 1;
+        $this->assertTrue($this->proxy->check_token($this->loopbackRequest('tok', 'POST', '/vectors/delete', null)));
+
+        foreach ([
+            'other path'   => self::sign('POST', '/vectors/upsert', 'tok'),
+            'other method' => self::sign('GET', '/vectors/delete', 'tok'),
+            'other token'  => self::sign('POST', '/vectors/delete', 'tok_sales'),
+            'garbage'      => 'deadbeef',
+        ] as $case => $sig) {
+            $this->assertInstanceOf(WP_Error::class,
+                $this->proxy->check_token($this->loopbackRequest('tok', 'POST', '/vectors/delete', $sig)), $case);
+        }
+    }
+
+    public function test_a_signature_never_bypasses_the_token_or_namespace_checks(): void {
+        update_option(MxChat_Plus_DuckDB_Pinecone_Proxy::PROXY_TOKEN_MAP_OPTION, ['sales' => 'tok_sales']);
+        $req = $this->loopbackRequest('tok_sales', 'POST', '/query', self::sign('POST', '/query', 'tok_sales'), 'support');
+        $this->assertFalse($this->proxy->check_token($req));
+        $this->assertFalse($this->proxy->check_token(
+            $this->loopbackRequest('unknown', 'POST', '/query', self::sign('POST', '/query', 'unknown'))
+        ));
+    }
+
     // ─── Rate limit ───────────────────────────────────────────────────────
 
     public function test_rate_limit_blocks_after_the_default_120_per_minute(): void {
@@ -167,15 +306,15 @@ final class ProxyAuthTest extends TestCase {
     }
 
     public function test_rate_limit_can_be_disabled_with_filter_returning_zero(): void {
-        // The shim apply_filters() in tests/bootstrap.php is a pass-through, so
-        // the default of 120 always applies. To exercise the "0 disables" branch
-        // we override the filter temporarily by stashing a closure in a global
-        // and re-declaring nothing — instead we just verify the contract is
-        // exercised by burning past the ceiling in a separate namespace.
-        // (A real WP environment lets the filter override; that path is covered
-        // by the existing FilterCompilationTest pattern of trusting the filter
-        // signature contract.)
-        $this->assertTrue($this->callPrivateRateLimit('isolated_ns'));
+        // The shim's apply_filters() honours $GLOBALS['__test_filter_overrides'].
+        $GLOBALS['__test_filter_overrides']['mxchat_plus_duckdb_proxy_rate_limit_per_minute'] = 0;
+        for ($i = 0; $i < 200; $i++) {
+            $this->assertTrue($this->callPrivateRateLimit('isolated_ns'), "request $i");
+        }
+        $this->assertSame([], array_filter(
+            array_keys($GLOBALS['__test_transients']),
+            fn($k) => strpos((string) $k, 'mxchat_plus_duckdb_rl_') === 0
+        ), 'a disabled limiter keeps no counter');
     }
 
     public function test_unusual_namespace_names_are_hashed_into_a_safe_key(): void {

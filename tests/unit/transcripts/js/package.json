@@ -1,0 +1,13 @@
+{
+  "name": "mxchat-plus-transcripts-dom-tests",
+  "private": true,
+  "description": "DOM tests for assets/js/admin-transcripts-export.js. Development tooling only: never shipped, and the plugin itself has no Node dependency.",
+  "license": "GPL-2.0-or-later",
+  "scripts": {
+    "test": "node --test export-selection.test.js"
+  },
+  "devDependencies": {
+    "jquery": "3.7.1",
+    "jsdom": "24.1.3"
+  }
+}

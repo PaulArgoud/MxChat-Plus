@@ -274,6 +274,92 @@ final class MysqlSyncTest extends TestCase {
             'incremental WHERE must cut at last_sync_at - 120 seconds');
     }
 
+    public function test_incremental_cutoff_is_rendered_in_site_time_west_of_utc(): void {
+        // MxChat writes `timestamp` with current_time('mysql'): site-local.
+        // A site at UTC-4 stores 10:30 for a row written at 14:30 UTC; a
+        // UTC cutoff of ~14:28 would skip it forever.
+        $GLOBALS['__test_timezone'] = 'America/New_York';
+        try {
+            $last = 1700000000; // 2023-11-14 22:13:20 UTC = 17:13:20 in New York
+            update_option('mxchat_plus_duckdb_options', array_merge(MxChat_Plus_DuckDB_Options::defaults(), [
+                'enabled' => true, 'last_sync_at' => $last,
+            ]));
+            $this->wpdb->set_response('SELECT id, url AS source_url', []);
+            (new MxChat_Plus_DuckDB_Mysql_Sync())->incremental_sync();
+
+            $sql = implode("\n", $this->wpdb->log);
+            $this->assertStringContainsString("timestamp >= '2023-11-14 17:11:20'", $sql,
+                'the earlier (site-local) rendering of last_sync_at - 120 s');
+        } finally {
+            unset($GLOBALS['__test_timezone']);
+        }
+    }
+
+    public function test_incremental_cutoff_keeps_utc_east_of_utc(): void {
+        // East of UTC the UTC rendering is the earlier one: it also covers a
+        // row stamped by the column's own DEFAULT CURRENT_TIMESTAMP.
+        $this->assertSame('2023-11-14 22:13:20', (function () {
+            $GLOBALS['__test_timezone'] = 'Europe/Paris';
+            try {
+                return MxChat_Plus_DuckDB_Mysql_Sync::timestamp_cutoff(1700000000);
+            } finally {
+                unset($GLOBALS['__test_timezone']);
+            }
+        })());
+    }
+
+    public function test_incremental_sync_also_takes_ids_above_the_last_synced_one(): void {
+        update_option('mxchat_plus_duckdb_options', array_merge(MxChat_Plus_DuckDB_Options::defaults(), [
+            'enabled' => true, 'embedding_dim' => 3, 'last_sync_at' => 1700000000, 'last_sync_max_id' => 77,
+        ]));
+        $this->wpdb->set_response('SELECT id, url AS source_url', [
+            (object) ['id' => 90, 'source_url' => 'https://n/', 'article_content' => 'new',
+                      'embedding_vector' => serialize([0.1, 0.2, 0.3]), 'role_restriction' => 'public', 'content_type' => 'post'],
+        ]);
+        (new MxChat_Plus_DuckDB_Mysql_Sync())->incremental_sync();
+
+        $this->assertStringContainsString('OR id > 77)', implode("\n", $this->wpdb->log));
+        $this->assertSame(90, (int) get_option('mxchat_plus_duckdb_options')['last_sync_max_id']);
+    }
+
+    public function test_full_sync_records_the_highest_row_id(): void {
+        $this->wpdb->set_response('SELECT COUNT(*)', 2);
+        $this->wpdb->set_response('SELECT id, url AS source_url', [
+            (object) ['id' => 5, 'source_url' => 'https://a/', 'article_content' => 'a', 'embedding_vector' => serialize([0.1, 0.2, 0.3]), 'role_restriction' => 'public', 'content_type' => 'post'],
+            (object) ['id' => 9, 'source_url' => 'https://b/', 'article_content' => 'b', 'embedding_vector' => '', 'role_restriction' => 'public', 'content_type' => 'post'],
+        ]);
+        (new MxChat_Plus_DuckDB_Mysql_Sync())->full_sync();
+        $this->assertSame(9, (int) get_option('mxchat_plus_duckdb_options')['last_sync_max_id'],
+            'skipped rows count too: the watermark is about what was read');
+    }
+
+    // ─── Page title (MxChat 3.2.23+ `title` column) ──────────────────────
+
+    public function test_full_sync_carries_the_title_when_the_column_exists(): void {
+        $this->wpdb->set_response('SHOW COLUMNS FROM', ['id', 'url', 'article_content', 'embedding_vector', 'role_restriction', 'content_type', 'title']);
+        $this->wpdb->set_response('SELECT COUNT(*)', 1);
+        $this->wpdb->set_response('SELECT id, url AS source_url', [
+            (object) ['id' => 1, 'source_url' => 'https://t/', 'article_content' => 'body', 'embedding_vector' => serialize([0.1, 0.2, 0.3]),
+                      'role_restriction' => 'public', 'content_type' => 'page', 'title' => 'About &amp; us'],
+        ]);
+        (new MxChat_Plus_DuckDB_Mysql_Sync())->full_sync();
+
+        $this->assertStringContainsString(', title FROM ', implode("\n", $this->wpdb->log));
+        $this->assertStringContainsString("'About & us'", implode("\n", $this->mock_conn->log));
+    }
+
+    public function test_full_sync_selects_no_title_without_the_column(): void {
+        $this->wpdb->set_response('SHOW COLUMNS FROM', ['id', 'url', 'article_content', 'embedding_vector']);
+        $this->wpdb->set_response('SELECT COUNT(*)', 1);
+        $this->wpdb->set_response('SELECT id, url AS source_url', [
+            (object) ['id' => 1, 'source_url' => 'https://t/', 'article_content' => 'body', 'embedding_vector' => serialize([0.1, 0.2, 0.3]),
+                      'role_restriction' => 'public', 'content_type' => 'page'],
+        ]);
+        (new MxChat_Plus_DuckDB_Mysql_Sync())->full_sync();
+        $this->assertStringNotContainsString('title FROM', implode("\n", $this->wpdb->log));
+        $this->assertFalse(MxChat_Plus_DuckDB_Mysql_Sync::detect_kb_columns($this->wpdb->prefix . 'mxchat_system_prompt_content')['has_title']);
+    }
+
     public function test_incremental_sync_returns_zero_when_disabled(): void {
         $defaults = MxChat_Plus_DuckDB_Options::defaults();
         update_option('mxchat_plus_duckdb_options', array_merge($defaults, ['enabled' => false]));
@@ -409,6 +495,71 @@ final class MysqlSyncTest extends TestCase {
         $this->assertStringContainsString('DELETE FROM "mxchat_vectors"', $log);
         $this->assertStringContainsString("source_url = 'https://x.test/blog/post-42'", $log);
         $this->assertStringContainsString("bot_id = 'support_fr'", $log);
+    }
+
+    public function test_esc_url_raw_shim_empties_host_identities_like_wordpress(): void {
+        // Guard on the shim itself: a trim()-only esc_url_raw would let the
+        // identity tests below pass against the old, buggy cascade.
+        $this->assertSame('', esc_url_raw('upload://manual.pdf#page=3'));
+        $this->assertSame('', esc_url_raw('mxchat://manual-content/123-abc'));
+        $this->assertSame('https://x.test/a?b=1', esc_url_raw('https://x.test/a?b=1'));
+        $this->assertSame('http://x.test/a', esc_url_raw('x.test/a'));
+    }
+
+    /**
+     * @return array<string, array{0: string}>
+     */
+    public static function host_identity_provider(): array {
+        return [
+            'uploaded PDF page'    => ['upload://manual.pdf#page=3'],
+            'uploaded document'    => ['upload://handbook.docx'],
+            'chunked manual entry' => ['mxchat://manual-content/123-abc'],
+        ];
+    }
+
+    /**
+     * @dataProvider host_identity_provider
+     */
+    public function test_cascade_chunks_by_url_keeps_host_identities(string $identity): void {
+        // MxChat_Knowledge_Manager::sanitize_entry_source_url() (3.2.24+):
+        // esc_url_raw for http(s) only; our DELETE must name the same value.
+        $GLOBALS['__test_valid_nonces'] = ['legit' => 'mxchat_delete_chunks_nonce'];
+        $_POST = ['nonce' => 'legit', 'source_url' => '  ' . $identity . ' ', 'data_source' => 'pinecone', 'bot_id' => 'default'];
+        $_GET  = [];
+
+        (new MxChat_Plus_DuckDB_Mysql_Sync())->cascade_delete_chunks_by_url();
+
+        $this->assertStringContainsString("source_url = '" . $identity . "'", implode("\n", $this->mock_conn->log));
+    }
+
+    public function test_cascade_chunks_by_url_still_escapes_web_urls(): void {
+        $GLOBALS['__test_valid_nonces'] = ['legit' => 'mxchat_delete_chunks_nonce'];
+        $_POST = ['nonce' => 'legit', 'source_url' => 'https://x.test/a b', 'data_source' => 'pinecone'];
+        $_GET  = [];
+
+        (new MxChat_Plus_DuckDB_Mysql_Sync())->cascade_delete_chunks_by_url();
+
+        $this->assertStringContainsString("source_url = 'https://x.test/a%20b'", implode("\n", $this->mock_conn->log));
+    }
+
+    public function test_cascade_bulk_delete_stays_pinned_to_the_hosts_bulk_sanitiser(): void {
+        // MxChat's bulk handler still runs sourceUrl through esc_url_raw()
+        // (3.2.25): a non-http group loses its URL there and MxChat deletes
+        // its entry id only. We must do exactly the same, not more.
+        $GLOBALS['__test_valid_nonces'] = ['legit' => 'mxchat_bulk_delete_knowledge_nonce'];
+        $_POST = [
+            'nonce'   => 'legit',
+            'entries' => [
+                ['id' => 'upl_entry', 'source' => 'pinecone', 'sourceUrl' => 'upload://manual.pdf#page=3', 'isGroup' => true],
+            ],
+        ];
+        $_GET = [];
+
+        (new MxChat_Plus_DuckDB_Mysql_Sync())->cascade_bulk_delete();
+
+        $log = implode("\n", $this->mock_conn->log);
+        $this->assertStringContainsString("vector_id IN ('upl_entry')", $log);
+        $this->assertStringNotContainsString('source_url =', $log);
     }
 
     public function test_cascade_chunks_by_url_rejects_user_without_capability(): void {
@@ -549,6 +700,14 @@ final class MysqlSyncTest extends TestCase {
         $this->assertStringContainsString("starts_with(COALESCE(article_content, ''), '{\"document_type\"')", $log);
         $this->assertStringContainsString("json_extract_string(meta_json, '\$.chunk_index')", $log);
         $this->assertStringContainsString("'_chunk_'", $log);
+        // Schema v4: row_key (the FTS document id) is computed from the
+        // copied bot_id/vector_id, and one row per key survives so a URL
+        // stored twice in MySQL cannot abort the whole statement.
+        $this->assertStringContainsString('updated_at, title, row_key)', $log);
+        $this->assertStringContainsString('(bot_id) || chr(31) || (vector_id)', $log);
+        $this->assertStringContainsString('QUALIFY row_number() OVER (PARTITION BY bot_id, vector_id ORDER BY kb_id DESC) = 1', $log);
+        // No title column detected → NULL titles.
+        $this->assertStringContainsString('CAST(NULL AS VARCHAR) AS title', $log);
         // Cleanup: DETACH must run even on success.
         $this->assertStringContainsString('DETACH "mxp_wp_mysql_', $log);
 
@@ -615,5 +774,20 @@ final class MysqlSyncTest extends TestCase {
         (new MxChat_Plus_DuckDB_Mysql_Sync())->full_sync_native();
         $log = implode("\n", $native_conn->log);
         $this->assertStringContainsString("COALESCE(NULLIF(bot_id, ''), 'default') AS bot_id", $log);
+    }
+
+    public function test_native_sync_copies_the_title_column_when_present(): void {
+        $this->reset_has_mysql_extension_cache();
+        $this->wpdb->set_response('SHOW COLUMNS FROM', ['id', 'url', 'embedding_vector', 'title']);
+
+        $native_conn = new MxChat_Test_RecordingConnection('mock:native-title', [
+            'duckdb_extensions()' => [['installed' => true, 'loaded' => true]],
+            'SELECT COUNT(*)'     => [['c' => 0]],
+        ]);
+        MxChat_Test_Helpers::inject_mock_connection($native_conn);
+
+        (new MxChat_Plus_DuckDB_Mysql_Sync())->full_sync_native();
+        $log = implode("\n", $native_conn->log);
+        $this->assertStringContainsString("NULLIF(trim(COALESCE(CAST(title AS VARCHAR), '')), '') AS title", $log);
     }
 }

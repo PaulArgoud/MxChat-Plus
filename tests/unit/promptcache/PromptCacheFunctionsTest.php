@@ -41,9 +41,10 @@ final class PromptCacheFunctionsTest extends TestCase {
      * clauses de min_chars_for_model() *ou* sur la valeur d'une constante est
      * attrapée ici.
      *
-     * Deux pièges d'ordre déjà rencontrés (régression corrigée en 0.7.0) :
+     * Pièges d'ordre (le premier a déjà causé une régression, corrigée en 0.7.0) :
      *   - `mythos-preview` doit être testé AVANT `fable`/`mythos` ;
-     *   - `haiku-4` doit être testé AVANT `haiku`.
+     *   - `haiku-5` et `haiku-4` doivent être testés AVANT `haiku` ;
+     *   - `sonnet-5-5` doit être testé AVANT `sonnet`.
      *
      * @dataProvider modelThresholdProvider
      */
@@ -59,13 +60,21 @@ final class PromptCacheFunctionsTest extends TestCase {
     public static function modelThresholdProvider(): array {
         return [
             // famille                 modèle                         seuil attendu
+            'fable-5.1'            => ['claude-fable-5-1',            2050],
             'fable-5'              => ['claude-fable-5',              2050],
+            'mythos-5.1'           => ['claude-mythos-5-1',           2050],
             'mythos-5'             => ['claude-mythos-5',             2050],
             'mythos-preview'       => ['claude-mythos-preview',       8200],
+            'opus-5.5'             => ['claude-opus-5-5',             2050],
+            'opus-5'               => ['claude-opus-5',               2050],
             'opus-4.8'             => ['claude-opus-4-8',             4000],
             'opus-4.7'             => ['claude-opus-4-7',             8200],
             'opus-4.6'             => ['claude-opus-4-6',            16400],
+            'opus-4 (daté)'        => ['claude-opus-4-20250514',      4000],
+            'sonnet-5.5'           => ['claude-sonnet-5-5',           2050],
+            'sonnet-5'             => ['claude-sonnet-5',             4000],
             'sonnet-4.6'           => ['claude-sonnet-4-6',           4000],
+            'haiku-5.5'            => ['claude-haiku-5-5',            2050],
             'haiku-4.5'            => ['claude-haiku-4-5',           16400],
             'haiku-3.5'            => ['claude-3-5-haiku-20241022',   8200],
             'modèle inconnu'       => ['gpt-5.1',                    16400],
@@ -86,6 +95,18 @@ final class PromptCacheFunctionsTest extends TestCase {
             $m::min_chars_for_model('claude-3-5-haiku-20241022'),
             $m::min_chars_for_model('claude-haiku-4-5'),
             'haiku-4 doit être testé avant haiku.'
+        );
+        // haiku-5.5 (512) ne doit PAS retomber sur haiku 3.x (2048).
+        $this->assertNotSame(
+            $m::min_chars_for_model('claude-3-5-haiku-20241022'),
+            $m::min_chars_for_model('claude-haiku-5-5'),
+            'haiku-5 doit être testé avant haiku.'
+        );
+        // sonnet-5.5 (512) ne doit PAS retomber sur Sonnet 5 (1024).
+        $this->assertNotSame(
+            $m::min_chars_for_model('claude-sonnet-5'),
+            $m::min_chars_for_model('claude-sonnet-5-5'),
+            'sonnet-5-5 doit être testé avant sonnet.'
         );
     }
 
@@ -139,7 +160,131 @@ final class PromptCacheFunctionsTest extends TestCase {
             'hôte inconnu'      => ['https://example.com/x', null],
             'embeddings ignoré' => ['https://api.openai.com/v1/embeddings', null],
             'gemini streamé'    => ['https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent', null],
+            // Responses API (web search non streamé, Vector Store file_search).
+            'openai responses'  => ['https://api.openai.com/v1/responses', 'openai_responses'],
+            // Compatibilité OpenAI de Google, via le fournisseur personnalisé de MxChat.
+            'gemini compat'     => ['https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', 'openai'],
         ];
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    //  Endpoints ajoutés pour la mesure (Responses API, Gemini compat, custom)
+    // ──────────────────────────────────────────────────────────────────
+
+    public function test_gemini_compat_endpoint_is_measured_only_when_it_reports_cached_tokens(): void {
+        $endpoint = MxChat_Plus_PromptCache_Stats::identify_endpoint('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions');
+        $this->assertSame('gemini', $endpoint['provider']);
+        $this->assertTrue($endpoint['strict_usage']);
+
+        $this->assertNull(
+            MxChat_Plus_PromptCache_Stats::parse_usage($endpoint, ['model' => 'gemini-3.8-flash', 'usage' => ['prompt_tokens' => 100]]),
+            'pas de cached_tokens publié : aucune mesure plutôt qu\'un faux 0 %'
+        );
+        $usage = MxChat_Plus_PromptCache_Stats::parse_usage($endpoint, ['model' => 'gemini-3.8-flash', 'usage' => [
+            'prompt_tokens' => 100, 'prompt_tokens_details' => ['cached_tokens' => 0],
+        ]]);
+        $this->assertSame(100, $usage['input']);
+        $this->assertSame(0, $usage['cache_read']);
+    }
+
+    /** @dataProvider customProviderProvider */
+    public function test_custom_provider_url_is_recognised_in_both_host_forms(string $base, string $url, bool $expected): void {
+        $GLOBALS['__test_options']['mxchat_options'] = ['custom_provider_base_url' => $base];
+        try {
+            $endpoint = MxChat_Plus_PromptCache_Stats::identify_endpoint($url);
+            $this->assertSame($expected, $endpoint !== null && $endpoint['provider'] === 'custom', "{$base} / {$url}");
+            if ($expected) {
+                $this->assertSame('openai', $endpoint['style']);
+                $this->assertTrue($endpoint['strict_usage']);
+            }
+        } finally {
+            unset($GLOBALS['__test_options']['mxchat_options']);
+        }
+    }
+
+    /** @return array<string, array{0:string, 1:string, 2:bool}> */
+    public static function customProviderProvider(): array {
+        return [
+            // mxchat_resolve_custom_provider() : base + '/chat/completions' (+ ?api-version Azure).
+            'chat'                  => ['https://llm.example.com/v1', 'https://llm.example.com/v1/chat/completions', true],
+            'barre finale'          => ['https://llm.example.com/v1/', 'https://llm.example.com/v1/chat/completions', true],
+            'azure api-version'     => ['https://x.openai.azure.com/openai/deployments/d', 'https://x.openai.azure.com/openai/deployments/d/chat/completions?api-version=2024-10-21', true],
+            'port local'            => ['http://localhost:11434/v1', 'http://localhost:11434/v1/chat/completions', true],
+            // mxchat_fc_resolve_provider() : base gardée telle quelle si elle contient déjà chat/completions.
+            'base complète (AI Tools)' => ['https://llm.example.com/v1/chat/completions', 'https://llm.example.com/v1/chat/completions', true],
+            'autre chemin'          => ['https://llm.example.com/v1', 'https://llm.example.com/v1/embeddings', false],
+            'autre hôte'            => ['https://llm.example.com/v1', 'https://other.example.com/v1/chat/completions', false],
+            'autre port'            => ['http://localhost:11434/v1', 'http://localhost:1234/v1/chat/completions', false],
+            'autre schéma'          => ['https://llm.example.com/v1', 'http://llm.example.com/v1/chat/completions', false],
+            'base vide'             => ['', 'https://llm.example.com/chat/completions', false],
+        ];
+    }
+
+    public function test_custom_provider_lookup_survives_a_missing_or_odd_option(): void {
+        foreach ([null, 'garbage', ['custom_provider_base_url' => 42], ['custom_provider_base_url' => 'not a url']] as $option) {
+            $GLOBALS['__test_options']['mxchat_options'] = $option;
+            $this->assertNull(MxChat_Plus_PromptCache_Stats::identify_endpoint('https://llm.example.com/v1/chat/completions'));
+        }
+        unset($GLOBALS['__test_options']['mxchat_options']);
+    }
+
+    public function test_custom_provider_without_cached_tokens_records_nothing(): void {
+        // Ollama, LM Studio, vLLM… : usage sans prompt_tokens_details.
+        $endpoint = ['provider' => 'custom', 'style' => 'openai', 'strict_usage' => true];
+        $this->assertNull(MxChat_Plus_PromptCache_Stats::parse_usage($endpoint, ['model' => 'llama3', 'usage' => ['prompt_tokens' => 50]]));
+        // Sans strict_usage (OpenAI, OpenRouter…), l'absence vaut 0 comme avant.
+        $usage = MxChat_Plus_PromptCache_Stats::parse_usage(['style' => 'openai'], ['model' => 'gpt-5.1', 'usage' => ['prompt_tokens' => 50]]);
+        $this->assertSame(50, $usage['input']);
+    }
+
+    public function test_parse_usage_openai_responses_style(): void {
+        $usage = MxChat_Plus_PromptCache_Stats::parse_usage(
+            ['style' => 'openai_responses'],
+            ['model' => 'gpt-5.1', 'usage' => [
+                'input_tokens'         => 1200,
+                'input_tokens_details' => ['cached_tokens' => 1000],
+                'output_tokens'        => 80,
+            ]]
+        );
+        $this->assertSame('gpt-5.1', $usage['model']);
+        $this->assertSame(200, $usage['input']);
+        $this->assertSame(1000, $usage['cache_read']);
+        $this->assertSame(0, $usage['cache_creation']);
+
+        // L'ancien style 'openai' lisait prompt_tokens : 0 token enregistré.
+        $this->assertSame(0, MxChat_Plus_PromptCache_Stats::parse_usage(['style' => 'openai'], ['usage' => ['input_tokens' => 1200]])['input']);
+        $this->assertNull(MxChat_Plus_PromptCache_Stats::parse_usage(['style' => 'openai_responses'], ['model' => 'x']));
+    }
+
+    public function test_request_label_separates_the_vector_store_file_search_call(): void {
+        $endpoint = ['provider' => 'openai', 'style' => 'openai_responses'];
+        // find_relevant_content_openai_vectorstore() : outil file_search, pas d'instructions.
+        $search = ['body' => json_encode(['model' => 'gpt-5.1', 'input' => 'q',
+            'tools' => [['type' => 'file_search', 'vector_store_ids' => ['vs_1']]]])];
+        // Réponse web search : clé instructions.
+        $answer = ['body' => json_encode(['model' => 'gpt-5.1', 'input' => [], 'instructions' => 'sys',
+            'tools' => [['type' => 'web_search']]])];
+
+        $this->assertSame(' (file_search)', MxChat_Plus_PromptCache_Stats::request_label($endpoint, $search));
+        $this->assertSame('', MxChat_Plus_PromptCache_Stats::request_label($endpoint, $answer));
+        $this->assertSame('', MxChat_Plus_PromptCache_Stats::request_label(['style' => 'openai'], $search), 'Responses API uniquement');
+        $this->assertSame('', MxChat_Plus_PromptCache_Stats::request_label($endpoint, null));
+        $this->assertSame('', MxChat_Plus_PromptCache_Stats::request_label($endpoint, ['body' => 'not json']));
+    }
+
+    public function test_record_metrics_files_the_vector_store_search_under_its_own_label(): void {
+        unset($GLOBALS['__test_options'][MXCHAT_PLUS_PC_STORE_KEY]);
+        $response = ['body' => json_encode(['model' => 'gpt-5.1', 'usage' => [
+            'input_tokens' => 300, 'input_tokens_details' => ['cached_tokens' => 100],
+        ]])];
+        $args = ['body' => json_encode(['model' => 'gpt-5.1', 'input' => 'q', 'tools' => [['type' => 'file_search']]])];
+
+        MxChat_Plus_PromptCache::record_metrics($response, $args, 'https://api.openai.com/v1/responses');
+
+        $store = MxChat_Plus_PromptCache_Stats::get_store();
+        $this->assertSame(100, $store['total']['per_model']['gpt-5.1 (file_search)']['cache_read_tokens'] ?? null);
+        $this->assertSame(200, $store['total']['input_tokens']);
+        unset($GLOBALS['__test_options'][MXCHAT_PLUS_PC_STORE_KEY]);
     }
 
     public function test_identify_endpoint_extracts_gemini_model(): void {
@@ -331,6 +476,30 @@ final class PromptCacheFunctionsTest extends TestCase {
         $this->assertSame('ephemeral', $content[0]['cache_control']['type']);
     }
 
+    public function test_add_cache_control_to_content_accepts_an_explicit_control(): void {
+        $content = 'bonjour';
+        $loop    = MxChat_Plus_PromptCache_Models::loop_control(['type' => 'ephemeral', 'ttl' => '1h']);
+        $this->assertSame(['type' => 'ephemeral'], $loop, 'boucle AI Tools : TTL 5 min par défaut');
+        $this->assertTrue(MxChat_Plus_PromptCache_Models::add_cache_control_to_content($content, $loop));
+        $this->assertSame(['type' => 'ephemeral'], $content[0]['cache_control']);
+
+        $this->assertSame(['type' => 'ephemeral'], MxChat_Plus_PromptCache_Models::loop_control([]));
+        $not_a_list = ['a' => ['type' => 'text', 'text' => 'x']];
+        $this->assertFalse(MxChat_Plus_PromptCache_Models::add_cache_control_to_content($not_a_list));
+    }
+
+    public function test_content_helpers(): void {
+        $m = MxChat_Plus_PromptCache_Models::class;
+        $this->assertSame('ab', $m::content_text([['type' => 'text', 'text' => 'a'], ['type' => 'tool_result', 'content' => 'z'], ['type' => 'text', 'text' => 'b']]));
+        $this->assertSame('x', $m::content_text('x'));
+        $this->assertSame('', $m::content_text(null));
+
+        $this->assertTrue($m::content_has_tool_blocks([['type' => 'text'], ['type' => 'tool_result']]));
+        $this->assertTrue($m::content_has_tool_blocks([['type' => 'tool_use']]));
+        $this->assertFalse($m::content_has_tool_blocks([['type' => 'text']]));
+        $this->assertFalse($m::content_has_tool_blocks('tool_use'));
+    }
+
     public function test_add_cache_control_to_content_marks_last_block(): void {
         $content = [['type' => 'text', 'text' => 'a'], ['type' => 'text', 'text' => 'b']];
         $this->assertTrue(MxChat_Plus_PromptCache_Models::add_cache_control_to_content($content));
@@ -350,9 +519,13 @@ final class PromptCacheFunctionsTest extends TestCase {
 
     public function test_caching_hint_only_fires_on_unread_writes(): void {
         // Écritures > lectures sur un volume significatif : avertissement.
-        $this->assertNotSame('', MxChat_Plus_PromptCache_Models::caching_hint([
+        $hint = MxChat_Plus_PromptCache_Models::caching_hint([
             'requests' => 10, 'cache_creation_tokens' => 500, 'cache_read_tokens' => 10,
-        ]));
+        ]);
+        $this->assertNotSame('', $hint);
+        // Chaîne source anglaise (CLAUDE.md), qui nomme la cause introduite en 3.2.22.
+        $this->assertStringContainsString('Cache writes exceed cache reads', $hint);
+        $this->assertStringContainsString('{current_datetime}', $hint);
         // Cache relu : silence.
         $this->assertSame('', MxChat_Plus_PromptCache_Models::caching_hint([
             'requests' => 10, 'cache_creation_tokens' => 500, 'cache_read_tokens' => 5000,

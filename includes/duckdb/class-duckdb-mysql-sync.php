@@ -98,14 +98,30 @@ class MxChat_Plus_DuckDB_Mysql_Sync {
             // `\n---\n` separator and extracts the chunk_index / total_chunks
             // values; vector_id then mirrors mxchat\'s
             // `{md5(url)}_chunk_{N}` scheme for chunked rows.
+            // Page title (MxChat 3.2.23+ `title` column, written by
+            // MxChat_Utils::submit_content_to_db): NULL when the column is
+            // absent or the value blank, as the PHP path stores it.
+            $title_expr = !empty($columns['has_title'])
+                ? "NULLIF(trim(COALESCE(CAST(title AS VARCHAR), '')), '')"
+                : 'CAST(NULL AS VARCHAR)';
+
+            // The final SELECT is a CTE (`kb_rows`) so the outer one can
+            // compute row_key — the FTS document id since schema v4,
+            // Schema::row_key_sql() — from the computed bot_id/vector_id,
+            // and keep ONE row per (bot_id, vector_id): DuckDB refuses to
+            // upsert a key twice in one statement, and the same URL stored
+            // twice in MySQL would otherwise abort the whole copy. The
+            // highest MySQL id wins, as the PHP path's last-row-wins does.
             $sql = sprintf(
                 'INSERT OR REPLACE INTO %1$s
                     (vector_id, bot_id, embedding, content, source_url,
-                     role_restriction, content_type, chunk_index, total_chunks, is_chunked)
+                     role_restriction, content_type, chunk_index, total_chunks, is_chunked,
+                     updated_at, title, row_key)
                  WITH src AS (
                     SELECT
                         id, url, embedding_vector, role_restriction, content_type,
                         %6$s,
+                        %7$s AS title,
                         article_content,
                         starts_with(COALESCE(article_content, \'\'), \'{"document_type"\') AS has_prefix,
                         position(E\'\\n---\\n\' IN COALESCE(article_content, \'\')) AS sep_pos
@@ -131,32 +147,44 @@ class MxChat_Plus_DuckDB_Mysql_Sync {
                         (meta_json IS NOT NULL
                          AND json_extract_string(meta_json, \'$.document_type\') = \'chunked\') AS is_chunk_row
                     FROM parsed
+                 ),
+                 kb_rows AS (
+                    SELECT
+                        id AS kb_id,
+                        CASE
+                            WHEN is_chunk_row AND COALESCE(url, \'\') != \'\'
+                                 THEN md5(url) || \'_chunk_\' || CAST(COALESCE(chunk_idx, 0) AS VARCHAR)
+                            WHEN COALESCE(url, \'\') != \'\'
+                                 THEN md5(url)
+                            ELSE \'mxchat_kb_\' || CAST(id AS VARCHAR)
+                        END AS vector_id,
+                        %2$s AS bot_id,
+                        CAST(regexp_extract_all(embedding_vector, \'d:([-0-9.eE+]+);\', 1)
+                             AS DOUBLE[])::FLOAT[%3$d] AS embedding,
+                        body_text AS content,
+                        COALESCE(url, \'\') AS source_url,
+                        COALESCE(role_restriction, \'public\') AS role_restriction,
+                        COALESCE(content_type, \'content\') AS content_type,
+                        CASE WHEN is_chunk_row THEN chunk_idx   ELSE NULL END AS chunk_index,
+                        CASE WHEN is_chunk_row THEN chunk_total ELSE NULL END AS total_chunks,
+                        is_chunk_row AS is_chunked,
+                        title
+                    FROM enriched
                  )
                  SELECT
-                    CASE
-                        WHEN is_chunk_row AND COALESCE(url, \'\') != \'\'
-                             THEN md5(url) || \'_chunk_\' || CAST(COALESCE(chunk_idx, 0) AS VARCHAR)
-                        WHEN COALESCE(url, \'\') != \'\'
-                             THEN md5(url)
-                        ELSE \'mxchat_kb_\' || CAST(id AS VARCHAR)
-                    END AS vector_id,
-                    %2$s AS bot_id,
-                    CAST(regexp_extract_all(embedding_vector, \'d:([-0-9.eE+]+);\', 1)
-                         AS DOUBLE[])::FLOAT[%3$d] AS embedding,
-                    body_text AS content,
-                    COALESCE(url, \'\') AS source_url,
-                    COALESCE(role_restriction, \'public\') AS role_restriction,
-                    COALESCE(content_type, \'content\') AS content_type,
-                    CASE WHEN is_chunk_row THEN chunk_idx   ELSE NULL END AS chunk_index,
-                    CASE WHEN is_chunk_row THEN chunk_total ELSE NULL END AS total_chunks,
-                    is_chunk_row AS is_chunked
-                 FROM enriched',
+                    vector_id, bot_id, embedding, content, source_url,
+                    role_restriction, content_type, chunk_index, total_chunks, is_chunked,
+                    current_timestamp, title, %8$s
+                 FROM kb_rows
+                 QUALIFY row_number() OVER (PARTITION BY bot_id, vector_id ORDER BY kb_id DESC) = 1',
                 $store->table_name_quoted(),
                 $bot_id_expr,
                 $dim,
                 $attach_alias,
                 $kb,
-                !empty($columns['has_bot_id']) ? 'bot_id' : "'default' AS bot_id"
+                !empty($columns['has_bot_id']) ? 'bot_id' : "'default' AS bot_id",
+                $title_expr,
+                MxChat_Plus_DuckDB_Vector_Store_Schema::row_key_sql('bot_id', 'vector_id')
             );
             $conn->execute($sql);
 
@@ -257,6 +285,7 @@ class MxChat_Plus_DuckDB_Mysql_Sync {
         $done = 0;
         $skipped = 0;
         $offset = 0;
+        $max_id = 0;
         while ($offset < $total) {
             $select = self::build_select($columns, $kb);
             $batch = $wpdb->get_results($wpdb->prepare(
@@ -269,6 +298,7 @@ class MxChat_Plus_DuckDB_Mysql_Sync {
 
             $vectors = [];
             foreach ($batch as $row) {
+                $max_id = max($max_id, (int) ($row->id ?? 0));
                 $v = self::row_to_vector($row, $columns);
                 if ($v !== null) {
                     $vectors[] = $v;
@@ -291,17 +321,30 @@ class MxChat_Plus_DuckDB_Mysql_Sync {
         self::log_skipped_summary('full_sync', $done, $skipped, $total);
 
         MxChat_Plus_DuckDB_Options::update([
-            'last_sync_at'    => time(),
-            'last_sync_count' => $done,
-            'last_error'      => '',
+            'last_sync_at'     => time(),
+            'last_sync_count'  => $done,
+            'last_sync_max_id' => $max_id,
+            'last_error'       => '',
         ]);
 
         return $done;
     }
 
     /**
-     * Picks up rows whose `timestamp` is newer than last_sync_at. Conservative
-     * — also re-syncs the last few minutes to absorb clock skew.
+     * Picks up rows written since the last sync. Conservative — also re-syncs
+     * the last few minutes to absorb clock skew.
+     *
+     * Two catches, because MxChat's `timestamp` is not UTC:
+     *   - MxChat writes it as current_time('mysql'), site-local time
+     *     (MxChat_Utils::submit_content_to_db and its siblings, MxChat
+     *     3.2.25), while the column's own DEFAULT CURRENT_TIMESTAMP is MySQL
+     *     session time. The cutoff is the earlier of the two renderings
+     *     (timestamp_cutoff()), so a site west of UTC no longer misses every
+     *     row it writes.
+     *   - Any row with an id above the highest one already synced is taken
+     *     too, whatever its timestamp says.
+     * In-place rewrites that keep the timestamp (kb-reimport, a role change)
+     * are re-synced by MxChat_Plus_DuckDB_Sync's RESYNC_HOOK instead.
      */
     public function incremental_sync(): int {
         global $wpdb;
@@ -311,17 +354,24 @@ class MxChat_Plus_DuckDB_Mysql_Sync {
         if (empty($opts['enabled'])) return 0;
 
         $since = max(0, (int) $opts['last_sync_at'] - 120);
-        $since_sql = gmdate('Y-m-d H:i:s', $since);
+        $since_sql = self::timestamp_cutoff($since);
+        $max_id = max(0, (int) ($opts['last_sync_max_id'] ?? 0));
 
         try {
             $store = new MxChat_Plus_DuckDB_Vector_Store();
             $columns = self::detect_kb_columns($kb);
 
             $select = self::build_select($columns, $kb);
-            $rows = $wpdb->get_results($wpdb->prepare(
-                $select . ' WHERE timestamp >= %s ORDER BY id ASC',
-                $since_sql
-            ));
+            $rows = $max_id > 0
+                ? $wpdb->get_results($wpdb->prepare(
+                    $select . ' WHERE (timestamp >= %s OR id > %d) ORDER BY id ASC',
+                    $since_sql,
+                    $max_id
+                ))
+                : $wpdb->get_results($wpdb->prepare(
+                    $select . ' WHERE timestamp >= %s ORDER BY id ASC',
+                    $since_sql
+                ));
 
             if (empty($rows)) {
                 MxChat_Plus_DuckDB_Options::update(['last_sync_at' => time(), 'last_error' => '']);
@@ -331,6 +381,7 @@ class MxChat_Plus_DuckDB_Mysql_Sync {
             $vectors = [];
             $skipped = 0;
             foreach ($rows as $row) {
+                $max_id = max($max_id, (int) ($row->id ?? 0));
                 $v = self::row_to_vector($row, $columns);
                 if ($v !== null) {
                     $vectors[] = $v;
@@ -347,8 +398,9 @@ class MxChat_Plus_DuckDB_Mysql_Sync {
             self::log_skipped_summary('incremental_sync', $count, $skipped, count($rows));
 
             MxChat_Plus_DuckDB_Options::update([
-                'last_sync_at' => time(),
-                'last_error'   => '',
+                'last_sync_at'     => time(),
+                'last_sync_max_id' => $max_id,
+                'last_error'       => '',
             ]);
 
             return $count;
@@ -360,6 +412,54 @@ class MxChat_Plus_DuckDB_Mysql_Sync {
     }
 
     /**
+     * The `timestamp >= …` cutoff for a UTC epoch: the earlier of its UTC
+     * and its site-local rendering (Y-m-d H:i:s strings compare in time
+     * order). See incremental_sync() for why both.
+     */
+    public static function timestamp_cutoff(int $since): string {
+        $utc = gmdate('Y-m-d H:i:s', $since);
+        $local = function_exists('wp_date') ? (string) wp_date('Y-m-d H:i:s', $since) : '';
+        return ($local !== '' && strcmp($local, $utc) < 0) ? $local : $utc;
+    }
+
+    /**
+     * Re-read the given MySQL KB rows and upsert them. Used after MxChat
+     * rewrites rows in place without touching their timestamp. Rows that
+     * no longer exist are skipped (the compactor owns deletions).
+     *
+     * @param list<int> $ids
+     * @return int rows upserted
+     */
+    public function resync_rows(array $ids): int {
+        global $wpdb;
+        $ids = array_values(array_unique(array_filter(array_map('intval', $ids), static fn(int $id): bool => $id > 0)));
+        if ($ids === []) return 0;
+
+        $kb = $wpdb->prefix . 'mxchat_system_prompt_content';
+        $store = new MxChat_Plus_DuckDB_Vector_Store();
+        $columns = self::detect_kb_columns($kb);
+        $select = self::build_select($columns, $kb);
+
+        $count = 0;
+        foreach (array_chunk($ids, self::BATCH_SIZE) as $batch) {
+            $placeholders = implode(',', array_fill(0, count($batch), '%d'));
+            $rows = $wpdb->get_results($wpdb->prepare(
+                $select . ' WHERE id IN (' . $placeholders . ') ORDER BY id ASC',
+                ...$batch
+            ));
+            $vectors = [];
+            foreach ((array) $rows as $row) {
+                $v = self::row_to_vector($row, $columns);
+                if ($v !== null) $vectors[] = $v;
+            }
+            if ($vectors !== []) {
+                $count += $store->upsert($vectors);
+            }
+        }
+        return $count;
+    }
+
+    /**
      * AJAX hook fired by mxchat's own delete action. We re-check the nonce +
      * capability ourselves instead of relying on mxchat's check running after
      * — defense in depth against priority changes upstream.
@@ -368,12 +468,13 @@ class MxChat_Plus_DuckDB_Mysql_Sync {
      * in each:
      *
      *   - `wp_ajax_mxchat_delete_pinecone_prompt` (the JS-driven Delete button):
-     *     POST `nonce` field, action key `mxchat_delete_pinecone_prompt_nonce`.
-     *     See admin/class-knowledge-manager.php in mxchat-basic 3.2.6
-     *     (check_ajax_referer at line ~5985).
+     *     POST `nonce` field, action key `mxchat_delete_pinecone_prompt_nonce`
+     *     (check_ajax_referer in MxChat_Knowledge_Manager::
+     *     ajax_mxchat_delete_pinecone_prompt, MxChat 3.2.25).
      *   - `admin_post_mxchat_delete_pinecone_prompt` (form-style fallback):
      *     GET `_wpnonce`, same action key `mxchat_delete_pinecone_prompt_nonce`
-     *     (wp_verify_nonce at line ~5928 of the same file).
+     *     (wp_verify_nonce in MxChat_Knowledge_Manager::
+     *     mxchat_handle_pinecone_prompt_delete, MxChat 3.2.25).
      *
      * Two additional action names are accepted as fallbacks:
      *   - `mxchat_delete_pinecone_prompt` — the legacy name this handler used
@@ -416,18 +517,24 @@ class MxChat_Plus_DuckDB_Mysql_Sync {
     }
 
     /**
-     * Mirror of mxchat-basic 3.2.6's `ajax_mxchat_delete_chunks_by_url`. When
-     * `data_source === 'pinecone'`, mxchat issues a `/vectors/list` + batch
-     * `/vectors/delete` against the configured Pinecone host. If that host is
-     * our proxy (Option B), the proxy handles the DuckDB delete itself; if
-     * it's real Pinecone, we need this cascade to keep DuckDB in sync.
+     * Mirror of MxChat_Knowledge_Manager::ajax_mxchat_delete_chunks_by_url
+     * (MxChat 3.2.25). When `data_source === 'pinecone'`, mxchat issues a
+     * GET `/vectors/list` + batch `/vectors/delete` against the configured
+     * Pinecone host (or the documents API for a document index). If that
+     * host is our proxy (Option B), the proxy handles the DuckDB delete
+     * itself; if it's real Pinecone while DuckDB holds a copy, this cascade
+     * keeps the copy in step (as does Sync::mirror_pinecone_write(), which
+     * also sees the delete paths that have no AJAX action).
      *
      * The `data_source === 'wordpress'` branch is a no-op on our side —
-     * mxchat deletes its own rows directly; our incremental sync will
-     * notice the gap on its next tick.
+     * mxchat deletes its own rows directly, and the compactor prunes their
+     * DuckDB copies.
      *
-     * Nonce contract: POST `nonce` + action `mxchat_delete_chunks_nonce`
-     * (admin/class-knowledge-manager.php in mxchat-basic 3.2.6 line ~6042).
+     * The source URL is sanitised exactly as MxChat sanitises it here
+     * (entry_source_url()), so our DELETE names the same identity — an
+     * upload:// or mxchat:// one included.
+     *
+     * Nonce contract: POST `nonce` + action `mxchat_delete_chunks_nonce`.
      */
     public function cascade_delete_chunks_by_url(): void {
         if (!$this->authorize_cascade([
@@ -438,7 +545,7 @@ class MxChat_Plus_DuckDB_Mysql_Sync {
         $data_source = isset($_POST['data_source']) ? sanitize_text_field(wp_unslash($_POST['data_source'])) : 'wordpress';
         if ($data_source !== 'pinecone') return;
 
-        $source_url = isset($_POST['source_url']) ? esc_url_raw(wp_unslash($_POST['source_url'])) : '';
+        $source_url = self::entry_source_url(isset($_POST['source_url']) && is_string($_POST['source_url']) ? wp_unslash($_POST['source_url']) : '');
         $bot_id     = isset($_POST['bot_id'])     ? sanitize_text_field(wp_unslash($_POST['bot_id'])) : 'default';
         if ($source_url === '') return;
 
@@ -454,15 +561,15 @@ class MxChat_Plus_DuckDB_Mysql_Sync {
     }
 
     /**
-     * Mirror of mxchat-basic 3.2.6's `ajax_mxchat_bulk_delete_knowledge`. The
-     * caller posts an `entries` array where each entry has
+     * Mirror of MxChat_Knowledge_Manager::ajax_mxchat_bulk_delete_knowledge
+     * (MxChat 3.2.25). The caller posts an `entries` array where each entry
+     * has
      *   { id, source: 'pinecone'|'wordpress', sourceUrl?, isGroup? }
      * We process only the pinecone-sourced entries; group entries map to
      * delete_by_source_url (chunk-aware), singleton entries map to
      * delete_by_ids([id]) — same vector-id scheme as mxchat itself uses.
      *
-     * Nonce contract: POST `nonce` + action `mxchat_bulk_delete_knowledge_nonce`
-     * (admin/class-knowledge-manager.php in mxchat-basic 3.2.6 line ~6251).
+     * Nonce contract: POST `nonce` + action `mxchat_bulk_delete_knowledge_nonce`.
      */
     public function cascade_bulk_delete(): void {
         if (!$this->authorize_cascade([
@@ -486,6 +593,12 @@ class MxChat_Plus_DuckDB_Mysql_Sync {
             $entry_id = isset($entry['id']) ? sanitize_text_field((string) $entry['id']) : '';
             // mxchat sends `isGroup` as bool OR the literal string 'true'.
             $is_group = isset($entry['isGroup']) && ($entry['isGroup'] === true || $entry['isGroup'] === 'true');
+            // Pinned to MxChat's bulk sanitiser on purpose: this handler
+            // still runs sourceUrl through esc_url_raw() in 3.2.25, which
+            // empties an upload:// or mxchat:// group, and then deletes only
+            // its entry id. Being identity-preserving here (as the
+            // single-group handler now is) would delete every chunk from
+            // DuckDB while MxChat deletes one vector from Pinecone.
             $source_url = isset($entry['sourceUrl']) ? esc_url_raw((string) $entry['sourceUrl']) : '';
 
             if ($is_group && $source_url !== '') {
@@ -508,6 +621,23 @@ class MxChat_Plus_DuckDB_Mysql_Sync {
         } catch (\Throwable $e) {
             MxChat_Plus_DuckDB_Options::update(['last_error' => 'cascade bulk delete: ' . $e->getMessage()]);
         }
+    }
+
+    /**
+     * Copy of MxChat_Knowledge_Manager::sanitize_entry_source_url() (a
+     * private method, MxChat 3.2.24+), which the single-group delete uses:
+     * esc_url_raw() only for http(s), sanitize_text_field() otherwise,
+     * trimmed first. esc_url_raw() empties the upload:// and mxchat://
+     * identities of uploaded files, PDF pages (upload://<file>#page=<n>) and
+     * long manual entries, and an empty URL used to end the cascade, leaving
+     * every chunk in DuckDB.
+     */
+    private static function entry_source_url(string $raw): string {
+        $raw = trim($raw);
+        if (preg_match('#^https?://#i', $raw)) {
+            return esc_url_raw($raw);
+        }
+        return sanitize_text_field($raw);
     }
 
     /**
@@ -608,10 +738,14 @@ class MxChat_Plus_DuckDB_Mysql_Sync {
 
     /**
      * Inspect the mxchat KB table once per sync to figure out which optional
-     * columns are present (notably `bot_id`, which only some mxchat versions
-     * carry). Cached for the request.
+     * columns are present: `bot_id`, which only some mxchat versions (or
+     * add-ons) carry, and `title`, the page title MxChat 3.2.23+ stores
+     * (created by mxchat-basic.php's table DDL on new installs, added by
+     * MxChat_Utils::ensure_kb_title_column() on upgraded ones — never called
+     * from here: it ALTERs the host's table, and is absent before 3.2.23).
+     * Cached for the request.
      *
-     * @return array{has_bot_id:bool}
+     * @return array{has_bot_id:bool, has_title:bool}
      */
     public static function detect_kb_columns(string $kb_table): array {
         static $cache = [];
@@ -623,6 +757,7 @@ class MxChat_Plus_DuckDB_Mysql_Sync {
 
         return $cache[$kb_table] = [
             'has_bot_id' => isset($set['bot_id']),
+            'has_title'  => isset($set['title']),
         ];
     }
 
@@ -648,6 +783,9 @@ class MxChat_Plus_DuckDB_Mysql_Sync {
         $fields = 'id, url AS source_url, article_content, embedding_vector, role_restriction, content_type';
         if (!empty($columns['has_bot_id'])) {
             $fields .= ', bot_id';
+        }
+        if (!empty($columns['has_title'])) {
+            $fields .= ', title';
         }
         return "SELECT {$fields} FROM {$kb_table}";
     }
@@ -688,6 +826,8 @@ class MxChat_Plus_DuckDB_Mysql_Sync {
             'chunk_index'      => $chunk_meta['chunk_index'],
             'total_chunks'     => $chunk_meta['total_chunks'],
             'is_chunked'       => $chunk_meta['is_chunked'],
+            // Normalised (and NULLed when blank) by Vector_Store::upsert().
+            'title'            => !empty($columns['has_title']) && isset($row->title) ? (string) $row->title : null,
         ];
     }
 }

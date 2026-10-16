@@ -24,7 +24,11 @@ if (!defined('ABSPATH')) { exit; }
     <br>
     <strong><?php esc_html_e('Reprocess all posts', 'mxchat-plus'); ?></strong>:
     <?php esc_html_e(
-        'walks WordPress posts/pages and re-runs the MxChat ingestion pipeline (chunking + embedding + upsert). Recommended for Pinecone-only installs. Calls the configured embedding API (OpenAI / Voyage / Gemini) — potential cost.',
+        'walks WordPress posts/pages and re-runs the MxChat ingestion pipeline (chunking + embedding + upsert). Recommended for Pinecone-only installs. Calls the configured embedding API (OpenAI / Voyage / Gemini / Custom Provider) — potential cost.',
+        'mxchat-plus'
+    ); ?>
+    <?php esc_html_e(
+        'Media library files (PDF, Word…) are not posts and are not included: re-import them with MxChat → Knowledge → Import → Media.',
         'mxchat-plus'
     ); ?>
 </p>
@@ -96,8 +100,19 @@ if (!defined('ABSPATH')) { exit; }
 
 <h3><?php esc_html_e('Pinecone proxy endpoint (Option B)', 'mxchat-plus'); ?></h3>
 <p class="description">
+    <?php if (!empty($opts['takeover_default_bot_pinecone'])): ?>
+        <?php esc_html_e(
+            'Default-bot routing is on: MxChat reads these values for the default bot in place of its stored Pinecone settings (through pre_option_mxchat_pinecone_addon_options). No action required.',
+            'mxchat-plus'
+        ); ?>
+    <?php else: ?>
+        <?php esc_html_e(
+            'Default-bot routing is off: the default bot still uses whatever is stored in MxChat\'s Pinecone settings (real Pinecone or the WordPress database), not these values. Turn on Default-bot routing under Activation to serve it from DuckDB.',
+            'mxchat-plus'
+        ); ?>
+    <?php endif; ?>
     <?php esc_html_e(
-        'These values are auto-injected into MxChat via the mxchat_get_bot_pinecone_config filter. No action required.',
+        'Multi-Bot bots opted in under Multi-Bot routing receive the same host, with a token of their own, through the mxchat_get_bot_pinecone_config filter.',
         'mxchat-plus'
     ); ?>
 </p>

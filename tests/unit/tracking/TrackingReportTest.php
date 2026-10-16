@@ -4,9 +4,9 @@
  * probe, and the shape of the two aggregates the admin screen renders.
  *
  * The report reads MxChat's own `{prefix}mxchat_url_clicks` table, which
- * exists only if the host's activation routine ever ran — so the probe, and
- * the "table absent" branch behind it, are load-bearing rather than defensive
- * decoration. The rest is classification, which decides what a site owner is
+ * exists only if mxchat_activate() ran (on activation, or after a MxChat
+ * update) and its dbDelta succeeded — so the probe, and the "table absent"
+ * branch behind it, are load-bearing rather than defensive decoration. The rest is classification, which decides what a site owner is
  * told about where their visitors went; getting it wrong is not a crash but a
  * report that quietly lies.
  *
@@ -124,10 +124,10 @@ final class TrackingReportTest extends TestCase {
     }
 
     protected function tearDown(): void {
-        // Neither the memoised probe nor the home host may survive into
-        // another test file: both are process-wide state.
+        // Neither the memoised probe, the home host nor the site timezone may
+        // survive into another test file: all three are process-wide state.
         MxChat_Plus_Tracking_Report::reset_cache();
-        unset($GLOBALS['__test_home_url']);
+        unset($GLOBALS['__test_home_url'], $GLOBALS['__test_timezone']);
 
         if ($this->previous_wpdb === null) {
             unset($GLOBALS['wpdb']);
@@ -181,9 +181,10 @@ final class TrackingReportTest extends TestCase {
     /**
      * A mailto: (or tel:) link has no host, so it lands in the internal
      * bucket. Documenting it rather than fixing it: the alternative is a third
-     * scope the screen has no column for, and MxChat's own click handler only
-     * binds absolute http(s) links (mxchat-basic/js/chat-script.js:2188), so
-     * such a row can only arrive from a hand-written POST.
+     * scope the screen has no column for, and MxChat's own click handlers only
+     * record absolute http(s) links (attachLinkTracking() and its delegated
+     * fallback, js/chat-script.js, MxChat 3.2.25), so such a row can only
+     * arrive from a hand-written POST.
      */
     public function test_a_hostless_scheme_counts_as_internal(): void {
         $this->assertSame(
@@ -431,6 +432,88 @@ final class TrackingReportTest extends TestCase {
     }
 
     /**
+     * The host stamps click_timestamp in GMT (current_time('mysql', 1)), and
+     * the dates mean the site's calendar days. In Paris in January (UTC+1),
+     * "the 5th to the 31st" is 23:00 GMT on the 4th to 22:59:59 GMT on the
+     * 31st; compared raw, an evening click on the 31st would be left out and
+     * one late on the 4th let in.
+     */
+    public function test_a_date_range_is_converted_from_site_time_to_gmt(): void {
+        $this->withTable();
+        $GLOBALS['__test_timezone'] = 'Europe/Paris';
+
+        MxChat_Plus_Tracking_Report::top_links(50, '2026-01-05', '2026-01-31');
+
+        $sql = $this->lastSql();
+        $this->assertStringContainsString("'2026-01-04 23:00:00'", $sql);
+        $this->assertStringContainsString("'2026-01-31 22:59:59'", $sql);
+        $this->assertStringNotContainsString('2026-01-05 00:00:00', $sql);
+    }
+
+    public function test_each_bound_gets_its_own_daylight_saving_offset(): void {
+        $this->withTable();
+        // Paris changes to summer time on 2026-03-29: UTC+1 before, UTC+2 after.
+        $GLOBALS['__test_timezone'] = 'Europe/Paris';
+        $this->wpdb->set_response('AS urls', self::row(['clicks' => '1', 'sessions' => '1', 'urls' => '1']));
+
+        MxChat_Plus_Tracking_Report::totals('2026-03-01', '2026-04-30');
+
+        $ranged = array_filter($this->wpdb->log, static function (string $sql): bool {
+            return stripos($sql, 'click_timestamp >=') !== false;
+        });
+        // The headline count and the classification page both carry it.
+        $this->assertCount(2, $ranged);
+        foreach ($ranged as $sql) {
+            $this->assertStringContainsString("'2026-02-28 23:00:00'", $sql);
+            $this->assertStringContainsString("'2026-04-30 21:59:59'", $sql);
+        }
+    }
+
+    public function test_a_site_west_of_greenwich_shifts_the_bounds_forward(): void {
+        $this->withTable();
+        $GLOBALS['__test_timezone'] = 'America/New_York';
+
+        MxChat_Plus_Tracking_Report::top_links(50, '2026-07-04', '2026-07-04');
+
+        $sql = $this->lastSql();
+        // EDT is UTC-4: the 4th runs from 04:00 GMT to 03:59:59 GMT on the 5th.
+        $this->assertStringContainsString("'2026-07-04 04:00:00'", $sql);
+        $this->assertStringContainsString("'2026-07-05 03:59:59'", $sql);
+    }
+
+    public function test_the_full_domain_sentinels_are_never_converted(): void {
+        $this->withTable();
+        $GLOBALS['__test_timezone'] = 'Europe/Paris';
+
+        // No range, and an unusable one: both fall back to the sentinels,
+        // which are not times of day anywhere. Shifted by an offset, the lower
+        // one would leave the DATETIME domain.
+        MxChat_Plus_Tracking_Report::top_links();
+        $this->assertStringContainsString(MxChat_Plus_Tracking_Report::RANGE_MIN, $this->lastSql());
+        $this->assertStringContainsString(MxChat_Plus_Tracking_Report::RANGE_MAX, $this->lastSql());
+
+        MxChat_Plus_Tracking_Report::top_links(50, 'yesterday', 'today');
+        $this->assertStringContainsString(MxChat_Plus_Tracking_Report::RANGE_MIN, $this->lastSql());
+        $this->assertStringContainsString(MxChat_Plus_Tracking_Report::RANGE_MAX, $this->lastSql());
+    }
+
+    public function test_the_report_and_the_transcripts_export_agree_on_a_range(): void {
+        // Called, not copied: the same dates must select the same instants in
+        // both exports, or a click and its conversation fall on either side.
+        $this->withTable();
+        $GLOBALS['__test_timezone'] = 'Asia/Tokyo';
+
+        MxChat_Plus_Tracking_Report::top_links(50, '2026-10-01', '2026-10-16');
+
+        $expected = MxChat_Plus_Transcripts_Export::local_range_to_gmt(
+            (array) MxChat_Plus_Transcripts_Export::sanitize_date_range('2026-10-01', '2026-10-16')
+        );
+        $sql = $this->lastSql();
+        $this->assertStringContainsString("'" . $expected['from'] . "'", $sql);
+        $this->assertStringContainsString("'" . $expected['to'] . "'", $sql);
+    }
+
+    /**
      * @dataProvider unusableRanges
      * @param string|null $from
      * @param string|null $to
@@ -556,6 +639,81 @@ final class TrackingReportTest extends TestCase {
             return stripos($sql, 'ORDER BY clicked_url ASC') !== false;
         });
         $this->assertCount(1, $pages);
+    }
+
+    // ─── write_csv() ──────────────────────────────────────────────────────
+
+    /**
+     * @param list<array{url:string,clicks:int,sessions:int,scope:'internal'|'external',last_click:string}> $rows
+     */
+    private static function csv(array $rows): string {
+        $h = fopen('php://memory', 'w+');
+        self::assertIsResource($h);
+        MxChat_Plus_Tracking_Report::write_csv($h, $rows);
+        rewind($h);
+        $out = (string) stream_get_contents($h);
+        fclose($h);
+        return $out;
+    }
+
+    /**
+     * @return list<list<string|null>>
+     */
+    private static function parse(string $csv): array {
+        $h = fopen('php://memory', 'w+');
+        self::assertIsResource($h);
+        fwrite($h, $csv);
+        rewind($h);
+        // Skip the BOM, then read as RFC 4180 (empty escape character).
+        fread($h, 3);
+        $lines = [];
+        while (($line = fgetcsv($h, null, ',', '"', '')) !== false) {
+            $lines[] = $line;
+        }
+        fclose($h);
+        return $lines;
+    }
+
+    public function test_the_csv_opens_with_a_bom_and_the_utc_header(): void {
+        $csv = self::csv([]);
+
+        $this->assertStringStartsWith("\xEF\xBB\xBF", $csv);
+        $this->assertSame(
+            [['URL', 'Scope', 'Clicks', 'Sessions', 'Last click (UTC)']],
+            self::parse($csv)
+        );
+    }
+
+    public function test_the_csv_writes_one_line_per_url_with_a_translated_scope(): void {
+        $lines = self::parse(self::csv([
+            ['url' => 'https://example.test/a', 'clicks' => 9, 'sessions' => 4, 'scope' => 'internal', 'last_click' => '2026-02-03 10:11:12'],
+            ['url' => 'https://other.test/b',   'clicks' => 2, 'sessions' => 2, 'scope' => 'external', 'last_click' => '2026-02-01 08:00:00'],
+        ]));
+
+        $this->assertCount(3, $lines);
+        $this->assertSame(['https://example.test/a', 'Internal', '9', '4', '2026-02-03 10:11:12'], $lines[1]);
+        $this->assertSame(['https://other.test/b', 'External', '2', '2', '2026-02-01 08:00:00'], $lines[2]);
+    }
+
+    public function test_the_csv_doubles_every_quote_as_rfc_4180_requires(): void {
+        // With PHP's historical '\\' escape, the quote after a backslash is
+        // left undoubled and an RFC 4180 reader shifts the rest of the row.
+        $url = 'https://example.test/a\\"b,c';
+
+        $csv   = self::csv([['url' => $url, 'clicks' => 1, 'sessions' => 1, 'scope' => 'internal', 'last_click' => '2026-01-01 00:00:00']]);
+        $lines = self::parse($csv);
+
+        $this->assertStringContainsString('"https://example.test/a\\""b,c"', $csv);
+        $this->assertCount(5, $lines[1], 'the row must keep its five columns');
+        $this->assertSame($url, $lines[1][0]);
+    }
+
+    public function test_the_csv_neutralises_a_url_that_reads_as_a_formula(): void {
+        $lines = self::parse(self::csv([
+            ['url' => '=HYPERLINK("https://evil.test")', 'clicks' => 1, 'sessions' => 1, 'scope' => 'internal', 'last_click' => '2026-01-01 00:00:00'],
+        ]));
+
+        $this->assertSame("\t=HYPERLINK(\"https://evil.test\")", $lines[1][0]);
     }
 
     // ─── Wiring ───────────────────────────────────────────────────────────

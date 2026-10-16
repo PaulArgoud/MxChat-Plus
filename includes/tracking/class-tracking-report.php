@@ -3,8 +3,8 @@
  * Server-side report over MxChat's own link-click log.
  *
  * MxChat records every click on an absolute link inside a bot answer into
- * `{prefix}mxchat_url_clicks` (the AJAX writer lives at
- * mxchat-basic/includes/class-mxchat-integrator.php:14752), then surfaces the
+ * `{prefix}mxchat_url_clicks` (the AJAX writer is
+ * MxChat_Integrator::mxchat_track_url_click(), MxChat 3.2.25), then surfaces the
  * table as nothing more than a DISTINCT list of URLs on a single
  * conversation's screen: no counts, no aggregation, and not a single click
  * column in its CSV export or its REST API. The data is collected and left
@@ -21,7 +21,7 @@
  * Two columns are deliberately never read, here or in the export: `user_ip`
  * and `user_agent`. The host anonymises the IP and empties the agent 30 days
  * after the click and deletes the row after a year
- * (MxChat_Privacy::sweep_url_clicks, mxchat-basic/includes/class-mxchat-privacy.php:490).
+ * (MxChat_Privacy::sweep_url_clicks(), MxChat 3.2.25).
  * Putting either into a report — worse, into a downloaded CSV that nothing
  * ever sweeps — would copy identifiers straight back out of the retention
  * window the host built for them.
@@ -78,11 +78,15 @@ class MxChat_Plus_Tracking_Report {
     }
 
     /**
-     * MxChat creates this table only in its activation routine
-     * (mxchat_create_url_clicks_table, mxchat-basic/mxchat-basic.php:594), so
-     * on a site where the host was installed but never activated — or where
-     * dbDelta failed — it is simply absent and every query against it is a
-     * fatal. Every host reader guards it exactly this way; so do we.
+     * MxChat creates this table from mxchat_activate()
+     * (mxchat_create_url_clicks_table(), MxChat 3.2.25), which runs when the
+     * plugin is activated AND on the first request after every MxChat version
+     * change (mxchat_check_for_update(), from mxchat_init() on plugins_loaded).
+     * Unlike the transcripts table, it is not in the list the host re-creates
+     * whenever it finds it missing. So an absent table means dbDelta failed,
+     * or the table was dropped since the last activation or update — and then
+     * every query against it is a fatal. Every host reader guards it exactly
+     * this way; so do we.
      */
     public static function table_exists(): bool {
         if (self::$table_exists !== null) {
@@ -105,11 +109,13 @@ class MxChat_Plus_Tracking_Report {
     }
 
     /**
-     * Forget the table probe. Its answer can only change when MxChat's
-     * activation routine runs, which is normally a different request — the
+     * Forget the table probe. Its answer can only change when
+     * mxchat_activate() runs, which is normally a different request — the
      * exception being an admin activating MxChat from the plugins screen
-     * after we have already probed. Also what the test suite uses to move
-     * between a site that has the table and one that does not.
+     * after we have already probed. (The update path needs no reset: MxChat
+     * runs it on plugins_loaded, before anything here can probe.) Also what
+     * the test suite uses to move between a site that has the table and one
+     * that does not.
      */
     public static function reset_cache(): void {
         self::$table_exists = null;
@@ -274,12 +280,34 @@ class MxChat_Plus_Tracking_Report {
             wp_die(esc_html__('Could not open the output stream for the export.', 'mxchat-plus'), '', ['response' => 500]);
         }
 
+        self::write_csv($output, $rows);
+
+        fclose($output);
+        exit;
+    }
+
+    /**
+     * BOM, header and one line per URL, onto any writable stream — split out
+     * of handle_export() so the file format is testable without its exit.
+     *
+     * Every line goes through fputcsv() with an EMPTY escape character, which
+     * is RFC 4180: a `"` is always doubled, whatever precedes it. With PHP's
+     * historical default escape (`\`), a `\"` pair is written with its quote
+     * left undoubled, and an RFC 4180 reader (Excel, Sheets, Python's csv)
+     * then shifts every following column of that row. The host's writer
+     * passes URLs through esc_url_raw(), which drops both characters, so no
+     * row it wrote can trip this today; the guard is for the file format, not
+     * for one writer's current behaviour. PHP 8.4 also deprecates leaving the
+     * argument out, and '' is the value PHP 9 will default to, so the file
+     * reads the same on every supported PHP.
+     *
+     * @param resource $output
+     * @param list<array{url:string,clicks:int,sessions:int,scope:'internal'|'external',last_click:string}> $rows
+     */
+    public static function write_csv($output, array $rows): void {
         // UTF-8 BOM: without it Excel mis-reads accented characters.
         fwrite($output, "\xEF\xBB\xBF");
 
-        // The escape argument is passed explicitly: PHP 8.4 deprecates leaving
-        // it out, and '' is both the RFC 4180 behaviour and the value PHP 9
-        // will default to, so the file reads the same on every supported PHP.
         fputcsv($output, [
             __('URL', 'mxchat-plus'),
             __('Scope', 'mxchat-plus'),
@@ -301,9 +329,6 @@ class MxChat_Plus_Tracking_Report {
                 $row['last_click'],
             ], ',', '"', '');
         }
-
-        fclose($output);
-        exit;
     }
 
     /**
@@ -365,11 +390,21 @@ class MxChat_Plus_Tracking_Report {
      * Turn an optional `YYYY-MM-DD` pair into inclusive SQL bounds, falling
      * back to the full DATETIME domain.
      *
-     * The widening of the end bound to 23:59:59 — and the swap of a reversed
-     * pair — is the transcripts module's logic, called rather than copied so
-     * the two exports can never drift apart on what "the 4th to the 4th"
-     * means. Both bounds or neither: a lone bound is unusable to that
-     * sanitiser and degrades to no filtering at all.
+     * The dates are the site's calendar days — the ones the admin screens
+     * show — while the host stamps click_timestamp in GMT
+     * (current_time('mysql', 1) in MxChat_Integrator::mxchat_track_url_click(),
+     * MxChat 3.2.25). So the validated local bounds are converted to GMT
+     * before they meet the column; compared raw, both edges of the range
+     * would slip by the site's UTC offset.
+     *
+     * Validation (the widening of the end bound to 23:59:59, the swap of a
+     * reversed pair) and conversion are both the transcripts module's logic,
+     * called rather than copied so the two exports can never drift apart on
+     * what "the 4th to the 4th" means. Both bounds or neither: a lone bound is
+     * unusable to that sanitiser and degrades to no filtering at all. The
+     * full-domain sentinels are never converted: they are not times of day
+     * anywhere, and shifting 1000-01-01 00:00:00 back by an offset would
+     * fall outside the DATETIME range.
      *
      * @return array{from:string,to:string}
      */
@@ -387,8 +422,11 @@ class MxChat_Plus_Tracking_Report {
         }
 
         $range = MxChat_Plus_Transcripts_Export::sanitize_date_range($from, $to);
+        if ($range === null) {
+            return $full;
+        }
 
-        return $range ?? $full;
+        return MxChat_Plus_Transcripts_Export::local_range_to_gmt($range);
     }
 
     /**

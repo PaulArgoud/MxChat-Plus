@@ -17,7 +17,9 @@ body:
       options:
         - DuckDB / MotherDuck vector store
         - Prompt caching
-        - Both / plugin-wide
+        - Transcripts CSV export
+        - Click tracking
+        - Several / plugin-wide
         - A new module
     validations:
       required: true
