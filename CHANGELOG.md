@@ -28,8 +28,8 @@ packages behind a stand-in for the `duckdb` CLI) driven through the plugin's CLI
 - **DuckDB is switched off by this update** on installs that had it on (it is now off by
   default). If MxChat answered from DuckDB, turn the module back on under
   **MxChat Plus → Modules** before anything else.
-- **DuckDB schema v4 runs by itself.** On first use after the update, the vector table is
-  rebuilt so that it is keyed on `(bot_id, vector_id)` (see *Fixed*). The rebuild copies the
+- **DuckDB schema v4 runs by itself.** On first use once the module is back on, the vector
+  table is rebuilt so that it is keyed on `(bot_id, vector_id)` (see *Fixed*). The rebuild copies the
   rows to `<table>_v4_staging`, recreates the table and its indexes, copies them back and
   drops the copy; it resumes on its own if interrupted, and runs on both sides of a MotherDuck
   mirror. It **refuses**, and leaves the store unusable until fixed, when `embedding_dim` or
@@ -47,10 +47,9 @@ packages behind a stand-in for the `duckdb` CLI) driven through the plugin's CLI
   routing** and save a choice.
 - **`wp mxchat-plus duckdb migrate-from-pinecone` no longer needs `--namespace=default`** —
   that flag named a namespace that does not exist. Omit it for the default namespace.
-- **Browser scripts are cache-busted by the plugin version.** The tracking and transcripts
-  fixes below reach browsers once the version changes and the new files are fetched; a site
-  running this code under an unchanged version number should clear its page and browser
-  caches.
+- **Browser scripts are cache-busted by the plugin version.** The version is now 1.1.0, so
+  browsers fetch the new tracking and transcripts scripts; a page cache that kept the old
+  script tags still needs clearing.
 
 ### Security
 

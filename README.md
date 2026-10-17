@@ -95,7 +95,7 @@ which an MxChat update will revert).
 
 | Module | What it does | Where it lives |
 |---|---|---|
-| **DuckDB / MotherDuck vector store** | Stores MxChat's vector knowledge base in an embedded `.duckdb` file or in MotherDuck cloud, with vector similarity search, hybrid BM25 + vector retrieval, a query cache, Parquet export/import and a Pinecone → DuckDB migrator (classic and document indexes). Presents itself to MxChat as a Pinecone endpoint — for the default bot and for Multi-Bot bots, each opt-in — and honours MxChat's role restrictions. | `includes/duckdb/`, `admin/views/duckdb/`, [`docs/duckdb/`](docs/duckdb/) |
+| **DuckDB / MotherDuck vector store** | Stores MxChat's vector knowledge base in an embedded `.duckdb` file or in MotherDuck cloud, with vector similarity search, hybrid BM25 + vector retrieval, a query cache, Parquet export/import and a Pinecone → DuckDB migrator (classic and document indexes). Presents itself to MxChat as a Pinecone endpoint — for the default bot and for Multi-Bot bots, each opt-in — and honours MxChat's role restrictions. **Off by default** since 1.1.0. | `includes/duckdb/`, `admin/views/duckdb/`, [`docs/duckdb/`](docs/duckdb/) |
 | **Prompt caching** | Injects Anthropic `cache_control` breakpoints (tools, system, and a rolling pair on the visitor's last two raw messages — never on MxChat's per-turn context block — plus 5-minute breakpoints inside the AI Tools loop) into outbound Claude requests, and measures cached tokens across Anthropic, OpenAI (Chat Completions and Responses), OpenRouter, xAI, DeepSeek, Gemini (native and OpenAI-compatible) and MxChat's custom provider. | `includes/promptcache/`, [`docs/promptcache/USAGE.md`](docs/promptcache/USAGE.md) |
 | **Transcripts CSV export** | Adds export buttons to MxChat's transcripts screen: the conversations you ticked (the selection is kept across pages, search and refresh), or — with nothing ticked — every conversation between two dates, through a modal styled like the host's own; plus **Export this conversation (CSV)** in the details drawer. The host's six columns, then *Name* and *Originating page*; UTC timestamps; RFC 4180 quoting with a UTF-8 BOM for Excel; CSV-injection neutralised; 2000 conversations per export. | `includes/transcripts/`, [`docs/transcripts/USAGE.md`](docs/transcripts/USAGE.md) |
 | **Click tracking** | Sends a Matomo (and optionally GA4) event when a visitor clicks a link inside a bot answer or a suggested question — and, opt-in, when the chat window is opened — internal and external distinguished, with the conversation's session id attached. Adds an admin report over the clicks MxChat already logs server-side but never aggregates. **Off by default** — the only module that puts code on public pages. | `includes/tracking/`, `admin/views/tracking/`, [`docs/tracking/USAGE.md`](docs/tracking/USAGE.md) |
@@ -185,10 +185,13 @@ Activate **MxChat Plus** in the WordPress plugins screen, *after* MxChat itself.
 download `mxchat-plus-x.y.z.zip` from [Releases](https://github.com/paulargoud/mxchat-plus/releases)
 and use **Plugins → Add New → Upload Plugin**.
 
-**Upgrading from 1.0.x with the DuckDB module on:** the first request after the update
-rebuilds the vector table for schema v4 (one row per bot and vector id). Take a backup first
-([`docs/duckdb/BACKUP.md`](docs/duckdb/BACKUP.md)). The rebuild runs once, under a lock, and
-resumes if interrupted. Vectors that one Multi-Bot bot had already overwritten in another's
+**Upgrading from 1.0.x:** the update switches the DuckDB module **off**, since it is no
+longer on by default, and an admin notice says so where it was on. MxChat then answers from
+its own store (WordPress database or Pinecone). If you use DuckDB, take a backup
+([`docs/duckdb/BACKUP.md`](docs/duckdb/BACKUP.md)) and turn the module back on under
+**MxChat Plus → Modules**: the first request then rebuilds the vector table for schema v4
+(one row per bot and vector id). The rebuild runs once, under a lock, and resumes if
+interrupted. Vectors that one Multi-Bot bot had already overwritten in another's
 namespace under 1.0.x cannot be recovered: re-import those URLs for the bot that lost them.
 See [`CHANGELOG.md`](CHANGELOG.md) for everything else in 1.1.0.
 
@@ -212,8 +215,12 @@ See [`CHANGELOG.md`](CHANGELOG.md) for everything else in 1.1.0.
 1. Turn **off** streaming in MxChat settings (see the prerequisite above) — or leave it on
    if AI Tools answer your chat; **MxChat Plus → Modules** says which applies.
 2. Nothing else to configure.
-3. After a handful of chat turns: `wp mxchat-plus promptcache stats`, or read the
-   dashboard widget.
+3. Send one chat message: a single non-streamed Claude reply records the first sample, and
+   cache reads show from the second turn (within the TTL, with a system prompt above the
+   model's minimum — 1024 tokens on Sonnet 5). Then `wp mxchat-plus promptcache stats`, or the
+   dashboard widget. If it keeps saying *No data yet*, no reply went through the WordPress
+   HTTP API: streaming is on without AI Tools. `wp mxchat-plus promptcache debug` shows the
+   last request the module saw.
 
 **Transcripts module**
 
@@ -225,7 +232,7 @@ See [`CHANGELOG.md`](CHANGELOG.md) for everything else in 1.1.0.
 
 **Click tracking module**
 
-1. Enable it in **MxChat Plus → Modules** — it ships **off**, unlike the other three.
+1. Enable it in **MxChat Plus → Modules** — it ships **off**, like the DuckDB module.
 2. Open the **Click tracking** tab and switch on Matomo, GA4, or both. Nothing is sent, and
    no script is even enqueued, while both are off.
 3. Matomo needs no site id here: events ride the tracker already on the page. Optionally

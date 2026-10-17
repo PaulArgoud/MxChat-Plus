@@ -20,7 +20,8 @@ It bundles four independent modules and wires them all in through WordPress hook
 
 Stores MxChat's vector knowledge base in an embedded `.duckdb` file or in MotherDuck
 cloud, instead of Pinecone or the slow MySQL fallback. It emulates the Pinecone wire
-protocol over a REST endpoint, so MxChat needs no changes to use it.
+protocol over a REST endpoint, so MxChat needs no changes to use it. **Off by default**
+since 1.1.0: turn it on under **MxChat Plus &rarr; Modules**.
 
 * Two backends — embedded `.duckdb` file, or MotherDuck via DuckDB's native `ATTACH 'md:…'`.
 * Similarity search through DuckDB's VSS extension, keyed per bot and vector id like Pinecone
@@ -136,7 +137,8 @@ on public pages and the only one that sends data to a third party.
 1. Upload the plugin folder to `/wp-content/plugins/`, or install it through the Plugins
    screen.
 2. Activate **MxChat Plus** — after MxChat itself.
-3. For the vector store: go to **MxChat &rarr; DuckDB / MotherDuck**, choose a backend,
+3. For the vector store: turn the module on under **MxChat Plus &rarr; Modules**, then go to
+   **MxChat &rarr; DuckDB / MotherDuck**, choose a backend,
    click **Test connection**, then pick an ingestion strategy.
 4. For prompt caching: turn **off** streaming in the MxChat settings (see the FAQ) — unless
    MxChat's AI Tools answer your chat — then do nothing else: it engages automatically.
@@ -160,6 +162,15 @@ later), most replies already arrive through its buffered tool loop and are cache
 streaming on, so turning streaming off changes little. **MxChat Plus &rarr; Modules** shows
 which case applies. A system prompt using `{current_datetime}` changes every minute and is
 deliberately left uncached.
+
+= The dashboard keeps saying "No data yet". How many exchanges does it take? =
+
+One. The module records a sample for every Claude reply that goes through the WordPress HTTP
+API, from the very first. If nothing appears after several messages, no reply took that
+path: MxChat streaming is on and AI Tools are off, so the chat goes through `curl_exec()`
+and nothing can see it. Turn streaming off (or turn AI Tools on), send one message, and
+check `wp mxchat-plus promptcache debug`. Cache *reads* then show from the second turn, as
+long as the system prompt is above the model's minimum (1024 tokens on Claude Sonnet 5).
 
 = Retrieval returns no matches after switching to DuckDB. Why? =
 
@@ -234,11 +245,12 @@ which changed which clicks it logs; compare sessions rather than clicks across t
 
 = 1.1.0 =
 * Compatibility with MxChat 3.2.25 (checked against its source; requires MxChat 3.2.21 or newer).
+* The DuckDB / MotherDuck module is now off by default, and this update switches it off once (with an admin notice where it was on).
 * Security: with DuckDB serving MxChat, entries restricted to a role were served to every visitor. Roles are now read from MxChat's own table.
 * Prompt caching: breakpoints no longer land on MxChat's per-turn context block; a system prompt using {current_datetime} is treated as volatile; AI Tools turns are cached even with streaming on; the Modules screen reads MxChat's real streaming setting.
 * Transcripts: the export keeps selections across pages and searches, converts date ranges to UTC, writes valid CSV, adds a Name column and an "Export this conversation" button.
 * Click tracking: follows MxChat's smart asset loading, reports the real link target, and can send an opt-in "chat opened" event.
-* DuckDB: schema v4 (one row per bot and vector id), new Pinecone proxy routes (GET fetch, list pagination, describe_index_stats), opt-in Multi-Bot routing, and safer compaction. Back up before updating; see the upgrade notice.
+* DuckDB: schema v4 (one row per bot and vector id), new Pinecone proxy routes (GET fetch, list pagination, describe_index_stats), opt-in Multi-Bot routing, safer compaction, and a locked, resumable rebuild. Back up before turning it back on; see the upgrade notice.
 
 = 1.0.0 =
 * Fixed (inherited from the pre-merge plugins): orphan compaction skipped up to 1000
@@ -276,7 +288,7 @@ The per-module history before the merge is preserved in `CHANGELOG.md`.
 == Upgrade Notice ==
 
 = 1.1.0 =
-The DuckDB / MotherDuck module is now off by default, and this update switches it off once: if you use it, turn it back on under MxChat Plus > Modules. With the DuckDB module on, the first request after the update rebuilds the vector table (schema v4). Take a backup first. Vectors a Multi-Bot bot already lost to another bot under 1.0.x must be re-imported.
+The DuckDB / MotherDuck module is now off by default, and this update switches it off once: if you use it, take a backup and turn it back on under MxChat Plus > Modules. The first request after that rebuilds the vector table (schema v4). Vectors a Multi-Bot bot already lost to another bot under 1.0.x must be re-imported.
 
 = 1.0.0 =
 Replaces the separate mxchat-duckdb and mxchat-promptcache plugins. Deactivate and delete
