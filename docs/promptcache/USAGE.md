@@ -5,6 +5,13 @@ instead of paying full price for them on every turn. Cached input tokens bill at
 **0.1×** the normal input rate, and time-to-first-token drops when the prefix comes from
 cache.
 
+**It complements MxChat, it does not duplicate it.** Since 3.2.21 MxChat marks its own
+system prompt (5-minute TTL), streaming or not. The module counts that breakpoint, never
+places a second one where it already covers the prefix, and adds what MxChat leaves out:
+the conversation history, a 1-hour TTL, breakpoints inside the AI Tools loop, and the
+statistics. The knowledge-base excerpts sent with each question change every turn and are
+cacheable by no one.
+
 It attaches to three filters and touches nothing else:
 
 | Filter | Role |
@@ -49,8 +56,12 @@ host option `auto_retry_on_transient_error` is `'0'`, retries up to twice on tra
 errors (after 750 ms, then 2 s). Every attempt goes through `http_request_args` and
 `http_response`, so the module's filters run once per attempt.
 
-**Trade-off:** you lose the typewriter effect. You gain ~85–95 % input-token cost
-reduction once the cache is warm — typically after 3–5 requests.
+**Trade-off:** you lose the word-by-word display. What you gain is what MxChat does not cache
+itself: the conversation history, a 1-hour TTL instead of 5 minutes, and the statistics. The
+knowledge-base excerpts MxChat sends with each question change every turn and are cacheable
+by no one. On short conversations with frequent visitors, MxChat's own system-prompt
+breakpoint already captures most of the saving — measure it on your traffic with
+`wp mxchat-plus promptcache stats` before deciding.
 
 ### With AI Tools active, streaming matters much less (MxChat ≥ 3.2.22)
 
@@ -142,7 +153,7 @@ blocks, not by the presence of `tools`, because the last hop has none.
 
 | Request | Breakpoints added by the module (in priority order) | TTL |
 |---|---|---|
-| Any | last entry of `tools[]`, when the definitions reach the threshold | module TTL |
+| Any | last entry of `tools[]`, when the definitions reach the threshold **and** MxChat's own system breakpoint cannot cover them (system unmarked because of `{context}`, or volatile) — rendered before the system, the tools are already inside the prefix MxChat caches | module TTL |
 | Any | last block of `system`, when it reaches the threshold and MxChat did not mark it already | module TTL |
 | Chat, no AI Tools | **u_N** (write point), then **u_{N-1}** (reads the previous turn's write exactly). The context block is **never** marked: it is billed as plain input. | module TTL |
 | AI Tools, first hop | **u_N**, then the **context block**, then **u_{N-1}** | u_N / u_{N-1}: module TTL; context block: 5 min |

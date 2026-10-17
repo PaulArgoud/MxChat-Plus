@@ -257,12 +257,17 @@ class MxChat_Plus_PromptCache {
 
         // --- 1) Tools : breakpoint sur le dernier outil si volumineux et non déjà caché.
         // Les tools sont rendus AVANT system dans le préfixe : c'est le bloc le plus
-        // stable. Le marqueur system de l'hôte couvre déjà tools + system ; celui-ci
-        // garde les tools en cache quand le system varie ({context}, {visitor_name},
-        // {current_date}, {current_datetime}).
+        // stable. Le marqueur system de l'hôte couvre déjà tools + system : le
+        // doubler ne cacherait rien de plus et prendrait l'une des 4 places à un
+        // breakpoint d'historique (boucle AI Tools). On ne marque donc les tools que
+        // là où ce marqueur ne suffit pas : system non marqué par l'hôte ({context}),
+        // ou volatile ({current_datetime}, filtre), dont le préfixe change sans eux.
+        $host_marks_system = is_array($payload['system'] ?? null)
+            && MxChat_Plus_PromptCache_Models::blocks_have_cache_control($payload['system']);
         if (
             $used < MXCHAT_PLUS_PC_MAX_BREAKPOINTS
             && $has_tools
+            && (!$host_marks_system || $volatile_system)
             && !MxChat_Plus_PromptCache_Models::blocks_have_cache_control($payload['tools'])
             && MxChat_Plus_PromptCache_Models::tools_size($payload['tools'], $min_chars) >= $min_chars
         ) {

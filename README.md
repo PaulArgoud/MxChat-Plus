@@ -12,7 +12,8 @@
 
 > **One companion plugin, four modules**, for the third-party [MxChat](https://mxchat.ai/)
 > chatbot plugin (`mxchat-basic`) — a **DuckDB / MotherDuck vector store** that replaces
-> Pinecone, **Anthropic prompt caching** that cuts input-token cost on Claude calls, a
+> Pinecone, **Anthropic prompt caching** that extends MxChat's own (conversation history,
+> 1-hour TTL) and measures what it saves, a
 > **CSV export of the transcripts you actually selected**, and **Matomo / GA4 events for the
 > links and suggested questions visitors click**. It hooks MxChat entirely through
 > WordPress filters and **never modifies a single file** of the host plugin.
@@ -53,8 +54,12 @@ first answer that calls no tool. Most turns are then cacheable **with streaming 
 the turns that fall back to streaming are not. AI Tools is off by default. The **Modules**
 screen says which case your settings are in.
 
-**Trade-off:** you lose the typewriter effect; you gain ~85–95 % input-token cost
-reduction once the cache is warm (typically 3–5 requests).
+**Trade-off:** you lose the word-by-word display. What you gain is what MxChat does not cache
+itself: the conversation history, a 1-hour TTL instead of 5 minutes, and the statistics. The
+knowledge-base excerpts MxChat sends with each question change every turn and are cacheable
+by no one. On short conversations with frequent visitors, MxChat's own system-prompt
+breakpoint already captures most of the saving — measure it on your traffic with
+`wp mxchat-plus promptcache stats` before deciding.
 
 Cacheable **even with streaming ON**: the AI Tools loop, the admin Content Generator, the
 editor assistant's REST path, and the non-streaming error fallback — all use
@@ -98,7 +103,7 @@ which an MxChat update will revert).
 | Module | What it does | Where it lives |
 |---|---|---|
 | **DuckDB / MotherDuck vector store** | Stores MxChat's vector knowledge base in an embedded `.duckdb` file or in MotherDuck cloud, with vector similarity search, hybrid BM25 + vector retrieval, a query cache, Parquet export/import and a Pinecone → DuckDB migrator (classic and document indexes). Presents itself to MxChat as a Pinecone endpoint — for the default bot and for Multi-Bot bots, each opt-in — and honours MxChat's role restrictions. **Off by default** since 1.1.0. | `includes/duckdb/`, `admin/views/duckdb/`, [`docs/duckdb/`](docs/duckdb/) |
-| **Prompt caching** | Injects Anthropic `cache_control` breakpoints (tools, system, and a rolling pair on the visitor's last two raw messages — never on MxChat's per-turn context block — plus 5-minute breakpoints inside the AI Tools loop) into outbound Claude requests, and measures cached tokens across Anthropic, OpenAI (Chat Completions and Responses), OpenRouter, xAI, DeepSeek, Gemini (native and OpenAI-compatible) and MxChat's custom provider. | `includes/promptcache/`, [`docs/promptcache/USAGE.md`](docs/promptcache/USAGE.md) |
+| **Prompt caching** | Complements the system-prompt breakpoint MxChat sets itself, never duplicating it: adds Anthropic `cache_control` breakpoints on the conversation history (a rolling pair on the visitor's last two raw messages — never on MxChat's per-turn context block), 5-minute breakpoints inside the AI Tools loop, tools or system only where MxChat's breakpoint cannot cover them, and a 1-hour TTL; and measures cached tokens across Anthropic, OpenAI (Chat Completions and Responses), OpenRouter, xAI, DeepSeek, Gemini (native and OpenAI-compatible) and MxChat's custom provider. | `includes/promptcache/`, [`docs/promptcache/USAGE.md`](docs/promptcache/USAGE.md) |
 | **Transcripts CSV export** | Adds export buttons to MxChat's transcripts screen: the conversations you ticked (the selection is kept across pages, search and refresh), or — with nothing ticked — every conversation between two dates, through a modal styled like the host's own; plus **Export this conversation (CSV)** in the details drawer. The host's six columns, then *Name* and *Originating page*; UTC timestamps; RFC 4180 quoting with a UTF-8 BOM for Excel; CSV-injection neutralised; 2000 conversations per export. | `includes/transcripts/`, [`docs/transcripts/USAGE.md`](docs/transcripts/USAGE.md) |
 | **Click tracking** | Sends a Matomo (and optionally GA4) event when a visitor clicks a link inside a bot answer or a suggested question — and, opt-in, when the chat window is opened — internal and external distinguished, with the conversation's session id attached. Adds an admin report over the clicks MxChat already logs server-side but never aggregates. **Off by default** — the only module that puts code on public pages. | `includes/tracking/`, `admin/views/tracking/`, [`docs/tracking/USAGE.md`](docs/tracking/USAGE.md) |
 
@@ -119,7 +124,9 @@ extension. Open source, $0 for embedded mode.
 MxChat resends a large `system` prompt and the full conversation history on every turn.
 Anthropic's [prompt caching](https://docs.claude.com/en/docs/build-with-claude/prompt-caching)
 reuses identical prefixes at roughly **0.1×** the input-token price, and cuts
-time-to-first-token. The module places up to the 4 breakpoints Anthropic allows, using a
+time-to-first-token. Since 3.2.21, MxChat marks its own system prompt (5-minute TTL), so this
+module only adds what MxChat leaves out, and never repeats a breakpoint MxChat already
+covers. The module places up to the 4 breakpoints Anthropic allows, using a
 *rolling* pair on the visitor's raw messages so the write breakpoint of turn *N* (the
 visitor's message u_N) becomes the read breakpoint of turn *N+1* — the hit rate stays flat
 as the conversation grows. It never marks the knowledge-base context block MxChat appends

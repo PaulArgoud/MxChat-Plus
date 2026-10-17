@@ -243,6 +243,14 @@ packages behind a stand-in for the `duckdb` CLI) driven through the plugin's CLI
   did not rebuild.
 - **DuckDB: `GET /vectors/fetch` and `/vectors/list` failed on an upgraded install** until
   another request happened to migrate the table: they now run the schema migrations first.
+- **Prompt caching: no more breakpoint that duplicated MxChat's.** The tool definitions are
+  rendered before the system prompt, so the system breakpoint MxChat sets itself already
+  caches them. The module marked them anyway, which cached nothing more and, inside the AI
+  Tools loop, took one of Anthropic's four slots from the conversation history. Tools are now
+  marked only where MxChat's breakpoint cannot cover them (system unmarked because of
+  `{context}`, or volatile). The README, readme and usage guide also stop promising a flat
+  "85–95 %" saving: what the module adds over MxChat's own caching is the history, the
+  1-hour TTL and the statistics, worth measuring on your own traffic.
 - **Prompt caching: AI Tools loop breakpoints that were never read.** A hop now skips its
   5-minute write when the next hop cannot offer tools any more (call budget or depth reached,
   or `tool_choice.disable_parallel_tool_use`, sent by MxChat ≥ 3.2.23). A volatile system

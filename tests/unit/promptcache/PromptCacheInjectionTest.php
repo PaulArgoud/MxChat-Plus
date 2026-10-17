@@ -524,13 +524,29 @@ final class PromptCacheInjectionTest extends TestCase {
         $this->assertTrue($debug['breakpoints']['prev_user']);
     }
 
-    public function test_fc_first_hop_with_large_tools_gives_the_slots_to_the_raw_message_and_the_context_block(): void {
+    public function test_fc_first_hop_with_large_tools_leaves_them_to_the_host_system_marker(): void {
+        // MxChat marque son system, rendu APRÈS les tools : ce marqueur couvre
+        // déjà les tools. En poser un second ne cacherait rien de plus et
+        // priverait l'historique de sa place sous le plafond de 4.
         $tools = [['name' => 'lookup', 'description' => str_repeat('d', 3000), 'input_schema' => ['type' => 'object']]];
         [, $sent] = self::inject(self::args(self::fc_payload(2, 1, true, $tools)));
 
-        $this->assertSame('1h', $sent['tools'][0]['cache_control']['ttl'] ?? null);
-        $this->assertSame([3, 4], self::marked_messages($sent), 'plafond : u2 et contexte avant u1');
+        $this->assertArrayNotHasKey('cache_control', $sent['tools'][0], 'redondant avec le marqueur system de MxChat');
+        $marked = self::marked_messages($sent);
+        $this->assertCount(3, $marked, 'la place libérée revient à u1');
+        $this->assertContains(3, $marked);
+        $this->assertContains(4, $marked);
         $this->assertSame([3600, 3600, 3600, 300], self::ttls_in_render_order($sent));
+    }
+
+    public function test_tools_are_marked_when_the_host_system_marker_cannot_cover_them(): void {
+        // System volatile ({current_datetime}) : son préfixe change chaque minute,
+        // les tools placés avant lui restent stables et méritent leur propre marqueur.
+        $GLOBALS['__test_filter_overrides']['mxchat_plus_promptcache_volatile_system'] = true;
+        $tools = [['name' => 'lookup', 'description' => str_repeat('d', 3000), 'input_schema' => ['type' => 'object']]];
+        [, $sent] = self::inject(self::args(self::fc_payload(2, 1, true, $tools)));
+
+        $this->assertNotEmpty($sent['tools'][0]['cache_control'] ?? null);
     }
 
     public function test_fc_first_hop_of_the_first_turn_marks_only_the_context_block(): void {

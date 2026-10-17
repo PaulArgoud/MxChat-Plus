@@ -44,11 +44,15 @@ since 1.1.0: turn it on under **MxChat Plus &rarr; Modules**.
 
 = Module 2 — Anthropic prompt caching =
 
-Injects `cache_control` breakpoints into MxChat's outbound Claude requests so identical
-prefixes are billed at roughly a tenth of the input price, and measures cached tokens
-across every supported provider.
+Complements the prompt caching MxChat does itself. Since 3.2.21, MxChat caches its own system
+prompt for 5 minutes; this module adds what it leaves out — the conversation history, a
+1-hour TTL, breakpoints inside the AI Tools loop — without ever repeating a breakpoint MxChat
+already covers, and measures cached tokens across every supported provider. Cached tokens
+bill at roughly a tenth of the input price. How much that saves depends on your traffic:
+the knowledge-base excerpts sent with each question are never cacheable, and on short
+conversations MxChat's own breakpoint captures most of the gain.
 
-* Up to 4 breakpoints: tool definitions, the system prompt, and a *rolling* pair on the
+* Up to 4 breakpoints in total, MxChat's included: tool definitions and the system prompt only where MxChat's own breakpoint cannot cover them, and a *rolling* pair on the
   visitor's last two raw messages — the write breakpoint of one turn (the visitor's message)
   becomes the read breakpoint of the next, so the hit rate stays flat as the conversation
   grows. MxChat's per-turn knowledge-base block is never marked, since the next turn does not
@@ -154,8 +158,9 @@ with raw `curl_exec()` rather than `wp_remote_post()`, which bypasses the WordPr
 API — the `http_request_args` filter the module uses is never called, so nothing can be
 injected (MxChat's own 5-minute system-prompt breakpoint still applies). Disable streaming
 in **MxChat &rarr; Settings** and the chat falls back to the `wp_remote_post()` branch,
-which is fully interceptable. You lose the typewriter effect and gain roughly 85-95%
-input-token cost reduction once the cache is warm.
+which is fully interceptable. You lose the word-by-word display; you gain the caching of the
+conversation history and a 1-hour TTL on top of what MxChat caches itself. Check what that
+is worth on your traffic with `wp mxchat-plus promptcache stats`.
 
 One exception: with MxChat's **AI Tools** active and a Claude model (MxChat 3.2.22 or
 later), most replies already arrive through its buffered tool loop and are cached even with
