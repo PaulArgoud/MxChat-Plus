@@ -14,9 +14,9 @@ This plugin is the merge of two previously separate plugins. From 1.0.0 onward t
 
 Nothing pending beyond 1.1.0 below.
 
-## [1.1.0] — 2026-10-17 (pre-release)
+## [1.1.0] — 2026-10-17
 
-Published as a GitHub pre-release while it is smoke-tested in a real WordPress (milestone **1.1.0**). A compatibility pass against **MxChat 3.2.25** (from 3.2.21). Most of what it fixes is not
+A compatibility pass against **MxChat 3.2.25** (from 3.2.21). Most of what it fixes is not
 a 3.2.25 regression: reading the new host source closely turned up defects that were already
 there, and they are fixed here too. Nothing in this release was exercised inside a running
 WordPress: it was checked against the MxChat 3.2.25 source, with the unit suite and PHPStan,
