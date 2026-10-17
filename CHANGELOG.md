@@ -221,6 +221,12 @@ packages behind a stand-in for the `duckdb` CLI) driven through the plugin's CLI
   `preventDefault()` of ours would strand every link. `tools/patches/` is documented as not
   applying to 3.2.21 or later (2 of 2 hunks fail on 3.2.25).
 
+- **Prompt Cache tab and dashboard widget: "No data yet" now says why.** With MxChat
+  streaming on and no AI Tools, no data will ever come from the chat, however many messages
+  are sent: the screen now says so, notes that MxChat still caches its own system prompt on
+  streamed replies (5-minute TTL, visible only in the Anthropic console), and gives the two
+  ways out — turning streaming off, or AI Tools (explained, since they also end the
+  word-by-word display). Otherwise it says that one message is enough for the first sample.
 - **The DuckDB / MotherDuck module is off by default**, and the update to 1.1.0 switches it
   off once on installs that had it on, with an admin notice there: MxChat then answers from
   its own knowledge store (WordPress database or Pinecone) again. If you use DuckDB, turn the

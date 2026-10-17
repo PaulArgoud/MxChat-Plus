@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: MxChat Plus 1.0.0\n"
 "Report-Msgid-Bugs-To: https://github.com/PaulArgoud/mxchat-plus/issues\n"
-"POT-Creation-Date: 2026-10-17 01:48+0200\n"
+"POT-Creation-Date: 2026-10-17 12:27+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -237,7 +237,7 @@ msgid "Latency p50 / p95 / p99"
 msgstr ""
 
 #: admin/views/duckdb/partials/section-diagnostics.php:95
-#: includes/promptcache/class-promptcache-admin.php:104
+#: includes/promptcache/class-promptcache-admin.php:148
 msgid "Cache hit rate"
 msgstr ""
 
@@ -1247,31 +1247,88 @@ msgstr ""
 msgid "Prompt Cache"
 msgstr ""
 
-#: includes/promptcache/class-promptcache-admin.php:67
-msgid "No data yet — statistics start filling in with the first API responses."
+#: includes/promptcache/class-promptcache-admin.php:69
+msgid "No data yet, and none will come from the chat: MxChat streaming is on."
+msgstr ""
+
+#: includes/promptcache/class-promptcache-admin.php:70
+msgid "Chat replies are not included: MxChat streaming is on."
+msgstr ""
+
+#: includes/promptcache/class-promptcache-admin.php:72
+msgid ""
+"Streamed replies are sent with curl_exec, outside the WordPress HTTP API, so "
+"this module can neither cache nor measure them, however many messages are "
+"sent."
 msgstr ""
 
 #: includes/promptcache/class-promptcache-admin.php:74
-msgid "Last 24 hours"
+msgid ""
+"MxChat itself still caches its system prompt on them (5-minute TTL), which "
+"this dashboard cannot see; what is lost is the caching of the conversation "
+"history and the 1-hour TTL. Your Anthropic console shows the cache reads."
 msgstr ""
 
-#: includes/promptcache/class-promptcache-admin.php:77
-msgid "Since installation"
+#. translators: %s: link to MxChat's settings screen.
+#: includes/promptcache/class-promptcache-admin.php:79
+#, php-format
+msgid ""
+"Turn off Enable Streaming in %s and save (MxChat clears the page cache on "
+"save). Replies then arrive in one block instead of word by word."
 msgstr ""
 
 #: includes/promptcache/class-promptcache-admin.php:80
-msgid "Per-model breakdown: wp mxchat-plus promptcache stats --by-model"
+msgid "MxChat → Settings"
+msgstr ""
+
+#: includes/promptcache/class-promptcache-admin.php:83
+msgid ""
+"Or, if your chatbot needs them anyway, turn on AI Tools under MxChat → "
+"Actions (MxChat 3.2.22 or later, with a Claude model). AI Tools are actions "
+"the chatbot may take during a conversation, the AI deciding when to use each "
+"one. While at least one tool is active, MxChat sends every reply as one "
+"complete message, through a path this module caches — so this also ends the "
+"word-by-word display."
+msgstr ""
+
+#: includes/promptcache/class-promptcache-admin.php:85
+msgid "Then send one message: a single reply records the first sample."
 msgstr ""
 
 #: includes/promptcache/class-promptcache-admin.php:105
+msgid ""
+"No data yet. AI Tools are active (MxChat → Actions) with a Claude model, so "
+"MxChat sends replies as one complete message, through a path this module "
+"caches: the first reply records the first sample."
+msgstr ""
+
+#: includes/promptcache/class-promptcache-admin.php:109
+msgid ""
+"No data yet. Send one chat message: the first Claude reply records the first "
+"sample, and cache reads show from the second turn."
+msgstr ""
+
+#: includes/promptcache/class-promptcache-admin.php:118
+msgid "Last 24 hours"
+msgstr ""
+
+#: includes/promptcache/class-promptcache-admin.php:121
+msgid "Since installation"
+msgstr ""
+
+#: includes/promptcache/class-promptcache-admin.php:124
+msgid "Per-model breakdown: wp mxchat-plus promptcache stats --by-model"
+msgstr ""
+
+#: includes/promptcache/class-promptcache-admin.php:149
 msgid "Requests"
 msgstr ""
 
-#: includes/promptcache/class-promptcache-admin.php:106
+#: includes/promptcache/class-promptcache-admin.php:150
 msgid "Tokens read from cache"
 msgstr ""
 
-#: includes/promptcache/class-promptcache-admin.php:107
+#: includes/promptcache/class-promptcache-admin.php:151
 msgid "Uncached input tokens"
 msgstr ""
 

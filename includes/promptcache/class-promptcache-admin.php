@@ -58,13 +58,57 @@ class MxChat_Plus_PromptCache_Admin {
     }
 
     /**
+     * Avertissement « streaming activé sans AI Tools » : le chat principal
+     * n'est alors ni mis en cache ni mesuré, quel que soit le nombre d'échanges.
+     * `mxchat-settings` est le slug de la page de réglages de l'HÔTE
+     * (MxChat_Admin, MxChat 3.2.25) : ne pas le renommer.
+     */
+    private static function streaming_notice_html(bool $no_data): string {
+        $settings = admin_url('admin.php?page=mxchat-settings');
+        $lead = $no_data
+            ? __('No data yet, and none will come from the chat: MxChat streaming is on.', 'mxchat-plus')
+            : __('Chat replies are not included: MxChat streaming is on.', 'mxchat-plus');
+        return '<div class="notice notice-warning inline"><p><strong>' . esc_html($lead) . '</strong> '
+            . esc_html__('Streamed replies are sent with curl_exec, outside the WordPress HTTP API, so this module can neither cache nor measure them, however many messages are sent.', 'mxchat-plus')
+            . (MxChat_Plus_Host::has_native_prompt_cache()
+                ? ' ' . esc_html__('MxChat itself still caches its system prompt on them (5-minute TTL), which this dashboard cannot see; what is lost is the caching of the conversation history and the 1-hour TTL. Your Anthropic console shows the cache reads.', 'mxchat-plus')
+                : '')
+            . '</p><ul style="list-style:disc;margin-left:20px;"><li>'
+            . sprintf(
+                /* translators: %s: link to MxChat's settings screen. */
+                esc_html__('Turn off Enable Streaming in %s and save (MxChat clears the page cache on save). Replies then arrive in one block instead of word by word.', 'mxchat-plus'),
+                '<a href="' . esc_url($settings) . '">' . esc_html__('MxChat → Settings', 'mxchat-plus') . '</a>'
+            )
+            . '</li><li>'
+            . esc_html__('Or, if your chatbot needs them anyway, turn on AI Tools under MxChat → Actions (MxChat 3.2.22 or later, with a Claude model). AI Tools are actions the chatbot may take during a conversation, the AI deciding when to use each one. While at least one tool is active, MxChat sends every reply as one complete message, through a path this module caches — so this also ends the word-by-word display.', 'mxchat-plus')
+            . '</li></ul><p>'
+            . esc_html__('Then send one message: a single reply records the first sample.', 'mxchat-plus')
+            . '</p></div>';
+    }
+
+    /**
      * Rendu partagé widget / onglet : bloc 24 h, bloc cumulatif, pointeur CLI.
      * Aucun `return` de HTML : les deux appelants écrivent dans le flux de sortie.
      */
     private static function render_summaries(): void {
         $store = MxChat_Plus_PromptCache_Stats::get_store();
+        // Le diagnostic streaming passe AVANT les chiffres : un « pas encore de
+        // données » qui ne viendront jamais (chat streamé par curl_exec, hors
+        // de l'API HTTP WordPress) ferait attendre l'admin indéfiniment.
+        $streamed = MxChat_Plus_Host::streaming_enabled();
+        $ai_tools = $streamed && MxChat_Plus_Host::ai_tools_route_claude();
+        if ($streamed && !$ai_tools) {
+            echo self::streaming_notice_html($store === null); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+        }
         if ($store === null) {
-            echo '<p>' . esc_html__('No data yet — statistics start filling in with the first API responses.', 'mxchat-plus') . '</p>';
+            if ($ai_tools) {
+                $text = __('No data yet. AI Tools are active (MxChat → Actions) with a Claude model, so MxChat sends replies as one complete message, through a path this module caches: the first reply records the first sample.', 'mxchat-plus');
+            } elseif ($streamed) {
+                return;
+            } else {
+                $text = __('No data yet. Send one chat message: the first Claude reply records the first sample, and cache reads show from the second turn.', 'mxchat-plus');
+            }
+            echo '<p>' . esc_html($text) . '</p>';
             return;
         }
 

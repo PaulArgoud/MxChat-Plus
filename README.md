@@ -44,8 +44,10 @@ through `MxChat_Integrator::mxchat_generate_response_claude()`, which posts thro
 `mxchat_provider_call_with_retry()` — `wp_remote_post()`, up to three attempts on transient
 errors, each of which goes through this module's filters — and is fully interceptable.
 
-**The AI Tools exception (MxChat ≥ 3.2.22).** With **Actions → AI Tools** active (at least
-one tool enabled) and a `claude-*` model, MxChat runs its function-calling loop *before* the
+**The AI Tools exception (MxChat ≥ 3.2.22).** AI Tools (**MxChat → Actions → AI Tools**) are
+actions MxChat lets the chatbot take during a conversation, the AI deciding when to use
+each; MxChat itself warns that while one is active, replies arrive as one complete message
+rather than word by word. With at least one tool enabled and a `claude-*` model, MxChat runs its function-calling loop *before* the
 streaming decision, buffered, through that same `wp_remote_post()` wrapper, and keeps a
 first answer that calls no tool. Most turns are then cacheable **with streaming on**; only
 the turns that fall back to streaming are not. AI Tools is off by default. The **Modules**

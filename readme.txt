@@ -167,9 +167,12 @@ deliberately left uncached.
 
 One. The module records a sample for every Claude reply that goes through the WordPress HTTP
 API, from the very first. If nothing appears after several messages, no reply took that
-path: MxChat streaming is on and AI Tools are off, so the chat goes through `curl_exec()`
-and nothing can see it. Turn streaming off (or turn AI Tools on), send one message, and
-check `wp mxchat-plus promptcache debug`. Cache *reads* then show from the second turn, as
+path: MxChat streaming is on, so the chat goes through `curl_exec()` and nothing can see
+it. Turn streaming off in **MxChat &rarr; Settings**, send one message, and check
+`wp mxchat-plus promptcache debug`. (MxChat's **AI Tools**, under **MxChat &rarr; Actions**,
+are actions the chatbot may take during a conversation; while one is active MxChat also
+sends replies as one complete message, on a path the module caches. Turning them on only
+for caching is not worth it: it ends the word-by-word display just the same.) Cache *reads* then show from the second turn, as
 long as the system prompt is above the model's minimum (1024 tokens on Claude Sonnet 5).
 
 = Retrieval returns no matches after switching to DuckDB. Why? =

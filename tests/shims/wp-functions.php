@@ -96,6 +96,11 @@ if (!function_exists('update_option')) {
         return true;
     }
 }
+if (!function_exists('admin_url')) {
+    function admin_url($path = '') {
+        return 'http://example.test/wp-admin/' . ltrim((string) $path, '/');
+    }
+}
 if (!function_exists('add_option')) {
     // Like WordPress: refuses (false) when the option already exists.
     function add_option($name, $value = '', $deprecated = '', $autoload = 'yes') {

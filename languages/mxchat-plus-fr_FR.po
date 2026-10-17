@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: MxChat Plus 1.0.0\n"
 "Report-Msgid-Bugs-To: https://github.com/PaulArgoud/mxchat-plus/issues\n"
-"POT-Creation-Date: 2026-10-17 01:48+0200\n"
+"POT-Creation-Date: 2026-10-17 12:27+0200\n"
 "PO-Revision-Date: 2026-10-17 00:00+0200\n"
 "Last-Translator: Paul Argoud\n"
 "Language-Team: French\n"
@@ -199,7 +199,7 @@ msgid "Latency p50 / p95 / p99"
 msgstr "Latence p50 / p95 / p99"
 
 #: admin/views/duckdb/partials/section-diagnostics.php:95
-#: includes/promptcache/class-promptcache-admin.php:104
+#: includes/promptcache/class-promptcache-admin.php:148
 msgid "Cache hit rate"
 msgstr "Taux de hit du cache"
 
@@ -1010,31 +1010,69 @@ msgstr "MxChat Plus — Cache de prompts"
 msgid "Prompt Cache"
 msgstr "Cache de prompts"
 
-#: includes/promptcache/class-promptcache-admin.php:67
-msgid "No data yet — statistics start filling in with the first API responses."
-msgstr "Aucune donnée pour l’instant — les statistiques se remplissent dès les premières réponses de l’API."
+#: includes/promptcache/class-promptcache-admin.php:69
+msgid "No data yet, and none will come from the chat: MxChat streaming is on."
+msgstr "Aucune donnée pour l'instant, et le chat n'en produira pas : le streaming de MxChat est activé."
+
+#: includes/promptcache/class-promptcache-admin.php:70
+msgid "Chat replies are not included: MxChat streaming is on."
+msgstr "Les réponses du chat ne sont pas comptées : le streaming de MxChat est activé."
+
+#: includes/promptcache/class-promptcache-admin.php:72
+msgid "Streamed replies are sent with curl_exec, outside the WordPress HTTP API, so this module can neither cache nor measure them, however many messages are sent."
+msgstr "Les réponses en streaming passent par curl_exec, hors de l'API HTTP de WordPress : ce module ne peut ni les mettre en cache ni les mesurer, quel que soit le nombre de messages envoyés."
 
 #: includes/promptcache/class-promptcache-admin.php:74
+msgid "MxChat itself still caches its system prompt on them (5-minute TTL), which this dashboard cannot see; what is lost is the caching of the conversation history and the 1-hour TTL. Your Anthropic console shows the cache reads."
+msgstr "MxChat met toutefois lui-même en cache son prompt système sur ces réponses (TTL de 5 minutes), ce que ce tableau de bord ne peut pas voir ; ce qui est perdu, c'est la mise en cache de l'historique de conversation et le TTL d'une heure. La console Anthropic affiche les lectures en cache."
+
+#. translators: %s: link to MxChat's settings screen.
+#: includes/promptcache/class-promptcache-admin.php:79
+#, php-format
+msgid "Turn off Enable Streaming in %s and save (MxChat clears the page cache on save). Replies then arrive in one block instead of word by word."
+msgstr "Désactivez « Enable Streaming » dans %s puis enregistrez (MxChat vide le cache de pages à l'enregistrement). Les réponses s'affichent alors d'un bloc au lieu de mot à mot."
+
+#: includes/promptcache/class-promptcache-admin.php:80
+msgid "MxChat → Settings"
+msgstr "MxChat → Réglages"
+
+#: includes/promptcache/class-promptcache-admin.php:83
+msgid "Or, if your chatbot needs them anyway, turn on AI Tools under MxChat → Actions (MxChat 3.2.22 or later, with a Claude model). AI Tools are actions the chatbot may take during a conversation, the AI deciding when to use each one. While at least one tool is active, MxChat sends every reply as one complete message, through a path this module caches — so this also ends the word-by-word display."
+msgstr "Ou, si votre chatbot en a besoin de toute façon, activez les AI Tools dans MxChat → Actions (MxChat 3.2.22 ou ultérieur, avec un modèle Claude). Les AI Tools sont des actions que le chatbot peut effectuer pendant une conversation, l'IA décidant quand utiliser chacune. Tant qu'au moins un outil est actif, MxChat envoie chaque réponse en un seul message complet, par un chemin que ce module met en cache — l'affichage mot à mot disparaît donc aussi."
+
+#: includes/promptcache/class-promptcache-admin.php:85
+msgid "Then send one message: a single reply records the first sample."
+msgstr "Envoyez ensuite un message : une seule réponse suffit pour enregistrer le premier échantillon."
+
+#: includes/promptcache/class-promptcache-admin.php:105
+msgid "No data yet. AI Tools are active (MxChat → Actions) with a Claude model, so MxChat sends replies as one complete message, through a path this module caches: the first reply records the first sample."
+msgstr "Aucune donnée pour l'instant. Les AI Tools sont actifs (MxChat → Actions) avec un modèle Claude : MxChat envoie donc ses réponses en un seul message complet, par un chemin que ce module met en cache. La première réponse enregistrera le premier échantillon."
+
+#: includes/promptcache/class-promptcache-admin.php:109
+msgid "No data yet. Send one chat message: the first Claude reply records the first sample, and cache reads show from the second turn."
+msgstr "Aucune donnée pour l'instant. Envoyez un message dans le chat : la première réponse de Claude enregistre le premier échantillon, et les lectures en cache apparaissent dès le deuxième échange."
+
+#: includes/promptcache/class-promptcache-admin.php:118
 msgid "Last 24 hours"
 msgstr "Dernières 24 h"
 
-#: includes/promptcache/class-promptcache-admin.php:77
+#: includes/promptcache/class-promptcache-admin.php:121
 msgid "Since installation"
 msgstr "Depuis l’installation"
 
-#: includes/promptcache/class-promptcache-admin.php:80
+#: includes/promptcache/class-promptcache-admin.php:124
 msgid "Per-model breakdown: wp mxchat-plus promptcache stats --by-model"
 msgstr "Détail par modèle : wp mxchat-plus promptcache stats --by-model"
 
-#: includes/promptcache/class-promptcache-admin.php:105
+#: includes/promptcache/class-promptcache-admin.php:149
 msgid "Requests"
 msgstr "Requêtes"
 
-#: includes/promptcache/class-promptcache-admin.php:106
+#: includes/promptcache/class-promptcache-admin.php:150
 msgid "Tokens read from cache"
 msgstr "Tokens lus depuis le cache"
 
-#: includes/promptcache/class-promptcache-admin.php:107
+#: includes/promptcache/class-promptcache-admin.php:151
 msgid "Uncached input tokens"
 msgstr "Tokens d’entrée hors cache"
 
@@ -1303,6 +1341,9 @@ msgstr "Nom"
 #: includes/transcripts/class-transcripts-export.php:316
 msgid "Originating page"
 msgstr "Page d'origine"
+
+#~ msgid "No data yet — statistics start filling in with the first API responses."
+#~ msgstr "Aucune donnée pour l’instant — les statistiques se remplissent dès les premières réponses de l’API."
 
 #~ msgid "Blend BM25 full-text scores with vector similarity (requires the DuckDB FTS extension and a populated `mxchat_plus_duckdb_query_text` filter)."
 #~ msgstr "Combiner les scores plein texte BM25 avec la similarité vectorielle (nécessite l'extension FTS de DuckDB et un filtre `mxchat_plus_duckdb_query_text` renseigné)."
